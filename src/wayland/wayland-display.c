@@ -207,11 +207,79 @@ void eplWlTerminateDisplay(EplPlatformData *plat, EplDisplay *pdpy)
 
 WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_init)
 {
-    return NULL;
+    WlDisplayInstance *inst = NULL;
+    EGLBoolean success = EGL_FALSE;
+
+    inst = calloc(1, sizeof(WlDisplayInstance));
+    if (inst == NULL)
+    {
+        eplSetError(pdpy->platform, EGL_BAD_ALLOC, "Out of memory");
+        return NULL;
+    }
+    eplRefCountInit(&inst->refcount);
+    inst->platform = eplPlatformDataRef(pdpy->platform);
+
+    if (pdpy->native_display == NULL)
+    {
+        inst->own_display = EGL_TRUE;
+        inst->wdpy = wl_display_connect(NULL);
+        if (inst->wdpy == NULL)
+        {
+            eplSetError(pdpy->platform, EGL_BAD_ALLOC, "wl_display_connect failed");
+            goto done;
+        }
+    }
+    else
+    {
+        inst->own_display = EGL_FALSE;
+        inst->wdpy = pdpy->native_display;
+    }
+
+    // Pick an arbitrary device to use as a placeholder for an internal EGLDisplay.
+    inst->internal_display = eplInternalDisplayRef(eplGetDeviceInternalDisplay(pdpy->platform, EGL_NO_DEVICE_EXT));
+    if (inst->internal_display == NULL)
+    {
+        goto done;
+    }
+
+    if (!eplInitializeInternalDisplay(pdpy->platform, inst->internal_display, NULL, NULL))
+    {
+        goto done;
+    }
+
+    success = EGL_TRUE;
+
+done:
+    if (!success)
+    {
+        eplWlDisplayInstanceUnref(inst);
+        inst = NULL;
+    }
+
+    return inst;
 }
 
 static void eplWlDisplayInstanceFree(WlDisplayInstance *inst)
 {
-    // Not implemented yet.
+    if (inst != NULL)
+    {
+        if (inst->internal_display != NULL)
+        {
+            eplTerminateInternalDisplay(inst->platform, inst->internal_display);
+            eplInternalDisplayUnref(inst->internal_display);
+        }
+
+        if (inst->own_display && inst->wdpy != NULL)
+        {
+            wl_display_disconnect(inst->wdpy);
+        }
+
+        if (inst->platform != NULL)
+        {
+            eplPlatformDataUnref(inst->platform);
+        }
+
+        free(inst);
+    }
 }
 

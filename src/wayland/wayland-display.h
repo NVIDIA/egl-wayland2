@@ -32,6 +32,26 @@ typedef struct
      * The internal (driver) EGLDisplay.
      */
     EplInternalDisplay *internal_display;
+
+    /**
+     * A reference to the \c EplPlatformData that this display came from.
+     *
+     * This is mainly here so that we can access the driver's EGL functions
+     * without going through an EplDisplay, since in some places (e.g., the
+     * window update callback) might only have a WlDisplayInstance pointer.
+     */
+    EplPlatformData *platform;
+
+    /**
+     * The display connection.
+     */
+    struct wl_display *wdpy;
+
+    /**
+     * True if the application passed NULL for the native display, so we had to
+     * open our own display connection.
+     */
+    EGLBoolean own_display;
 } WlDisplayInstance;
 
 EPL_REFCOUNT_DECLARE_TYPE_FUNCS(WlDisplayInstance, eplWlDisplayInstance);

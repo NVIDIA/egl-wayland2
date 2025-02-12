@@ -55,6 +55,7 @@ wayland_platform = shared_library('nvidia-egl-wayland2',
   [
     'wayland-platform.c',
     'wayland-display.c',
+    'wayland-dmabuf.c',
     generated_files,
   ],
   include_directories: [ inc_base ],

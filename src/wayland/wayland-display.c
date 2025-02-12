@@ -331,11 +331,33 @@ done:
     return success;
 }
 
+/**
+ * Binds a global Wayland object, using a specific wl_event_queue.
+ */
+static void *BindGlobalObject(struct wl_registry *registry,
+        uint32_t name,
+        const struct wl_interface *interface,
+        uint32_t version,
+        struct wl_event_queue *queue)
+{
+    struct wl_registry *wrapper = wl_proxy_create_wrapper(registry);
+    void *proxy = NULL;
+    if (wrapper == NULL)
+    {
+        return NULL;
+    }
+    wl_proxy_set_queue((struct wl_proxy *) wrapper, queue);
+    proxy = wl_registry_bind(wrapper, name, interface, version);
+    wl_proxy_wrapper_destroy(wrapper);
+    return proxy;
+}
+
 WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_init)
 {
     WlDisplayInstance *inst = NULL;
     WlDisplayRegistry names = {};
     struct wl_event_queue *queue = NULL;
+    dev_t mainDevice = 0;
     EGLBoolean success = EGL_FALSE;
 
     inst = calloc(1, sizeof(WlDisplayInstance));
@@ -402,6 +424,31 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
         goto done;
     }
 
+    inst->globals.dmabuf = BindGlobalObject(names.registry, names.zwp_linux_dmabuf_v1.name,
+            &zwp_linux_dmabuf_v1_interface, names.zwp_linux_dmabuf_v1.version, queue);
+    if (inst->globals.dmabuf == NULL)
+    {
+        eplSetError(pdpy->platform, EGL_BAD_ALLOC, "Failed to create zwp_linux_dmabuf_v1 proxy");
+        goto done;
+    }
+
+    /*
+     * Fetch the default set of formats and modifiers from the server.
+     *
+     * After this, we shouldn't get any more events from the zwp_linux_dmabuf_v1,
+     * and if we do, eplWlDmaBufFeedbackGetDefault will have already stubbed it
+     * out so that we ignore them.
+     *
+     * So, we reset the zwp_linux_dmabuf_v1 proxy's queue back to the default,
+     * which will allow us to destroy the wl_event_queue before returning.
+     */
+    inst->default_feedback = eplWlDmaBufFeedbackGetDefault(inst->wdpy, inst->globals.dmabuf, queue, &mainDevice);
+    wl_proxy_set_queue((struct wl_proxy *) inst->globals.dmabuf, NULL);
+    if (inst->default_feedback == NULL)
+    {
+        goto done;
+    }
+
     // Pick an arbitrary device to use as a placeholder for an internal EGLDisplay.
     inst->internal_display = eplInternalDisplayRef(eplGetDeviceInternalDisplay(pdpy->platform, EGL_NO_DEVICE_EXT));
     if (inst->internal_display == NULL)
@@ -439,10 +486,21 @@ static void eplWlDisplayInstanceFree(WlDisplayInstance *inst)
             eplInternalDisplayUnref(inst->internal_display);
         }
 
+        if (inst->globals.dmabuf != NULL)
+        {
+            zwp_linux_dmabuf_v1_destroy(inst->globals.dmabuf);
+        }
+        if (inst->globals.syncobj != NULL)
+        {
+            wp_linux_drm_syncobj_manager_v1_destroy(inst->globals.syncobj);
+        }
+
         if (inst->own_display && inst->wdpy != NULL)
         {
             wl_display_disconnect(inst->wdpy);
         }
+
+        eplWlFormatListFree(inst->default_feedback);
 
         if (inst->platform != NULL)
         {

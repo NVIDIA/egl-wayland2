@@ -19,6 +19,7 @@
 #define WAYLAND_DISPLAY_H
 
 #include "wayland-platform.h"
+#include "wayland-dmabuf.h"
 #include "refcountobj.h"
 
 /**
@@ -60,6 +61,11 @@ typedef struct
     {
         struct zwp_linux_dmabuf_v1 *dmabuf;
     } globals;
+
+    /**
+     * The set of formats and modifiers that the server supports.
+     */
+    WlFormatList *default_feedback;
 } WlDisplayInstance;
 
 EPL_REFCOUNT_DECLARE_TYPE_FUNCS(WlDisplayInstance, eplWlDisplayInstance);

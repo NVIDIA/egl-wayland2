@@ -18,7 +18,31 @@
 #include "wayland-display.h"
 
 #include <stdlib.h>
+#include <string.h>
 #include <assert.h>
+
+// The minimum and maximum versions of each protocol that we support.
+static const uint32_t PROTO_DMABUF_VERSION[2] = { 3, 4 };
+static const uint32_t PROTO_SYNC_OBJ_VERSION[2] = { 1, 1 };
+static const uint32_t PROTO_DRM_VERSION[2] = { 1, 1 };
+
+typedef struct
+{
+    uint32_t name;
+    uint32_t version;
+} WlDisplayGlobalName;
+
+/**
+ * Holds the object names and versions for the global Wayland protocol objects
+ * that we care about.
+ */
+typedef struct
+{
+    struct wl_registry *registry;
+    WlDisplayGlobalName zwp_linux_dmabuf_v1;
+    WlDisplayGlobalName wp_linux_drm_syncobj_manager_v1;
+    WlDisplayGlobalName wl_drm;
+} WlDisplayRegistry;
 
 static WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_init);
 static void eplWlDisplayInstanceFree(WlDisplayInstance *inst);
@@ -205,9 +229,113 @@ void eplWlTerminateDisplay(EplPlatformData *plat, EplDisplay *pdpy)
     pdpy->priv->inst = NULL;
 }
 
+static EGLBoolean CheckRegistryGlobal(WlDisplayGlobalName *obj,
+        const char *want_iface, const uint32_t need_version[2],
+        uint32_t name, const char *iface, uint32_t version)
+{
+    if (strcmp(iface, want_iface) == 0)
+    {
+        if (version >= need_version[0])
+        {
+            if (version > need_version[1])
+            {
+                version = need_version[1];
+            }
+            obj->name = name;
+            obj->version = version;
+        }
+        return EGL_TRUE;
+    }
+    else
+    {
+        return EGL_FALSE;
+    }
+}
+
+static void onRegistryGlobal(void *userdata, struct wl_registry *wl_registry,
+        uint32_t name, const char *interface, uint32_t version)
+{
+    WlDisplayRegistry *names = userdata;
+
+    if (CheckRegistryGlobal(&names->zwp_linux_dmabuf_v1, "zwp_linux_dmabuf_v1",
+                PROTO_DMABUF_VERSION, name, interface, version)) { }
+    else if (CheckRegistryGlobal(&names->wp_linux_drm_syncobj_manager_v1,
+                "wp_linux_drm_syncobj_manager_v1",
+                PROTO_SYNC_OBJ_VERSION, name, interface, version)) { }
+    else if (CheckRegistryGlobal(&names->wl_drm, "wl_drm",
+                PROTO_DRM_VERSION, name, interface, version)) { }
+}
+static void OnRegistryGlobalRemove(void *data, struct wl_registry *wl_registry, uint32_t name)
+{
+    // Ignore it. All of the objects that we care about are singletons.
+}
+static const struct wl_registry_listener REGISTRY_LISTENER = {
+    onRegistryGlobal,
+    OnRegistryGlobalRemove,
+};
+
+static void FreeDisplayRegistry(WlDisplayRegistry *registry)
+{
+    if (registry != NULL)
+    {
+        if (registry->registry != NULL)
+        {
+            wl_registry_destroy(registry->registry);
+            registry->registry = NULL;
+        }
+    }
+}
+
+static EGLBoolean GetDisplayRegistry(struct wl_display *wdpy,
+        struct wl_event_queue *queue,
+        WlDisplayRegistry *names)
+{
+    struct wl_display *wrapper = NULL;
+    EGLBoolean success = EGL_FALSE;
+
+    wrapper = wl_proxy_create_wrapper(wdpy);
+    if (wrapper == NULL)
+    {
+        goto done;
+    }
+
+    wl_proxy_set_queue((struct wl_proxy *) wrapper, queue);
+
+    names->registry = wl_display_get_registry(wrapper);
+    if (names->registry == NULL)
+    {
+        goto done;
+    }
+
+    if (wl_registry_add_listener(names->registry, &REGISTRY_LISTENER, names) != 0)
+    {
+        goto done;
+    }
+
+    if (wl_display_roundtrip_queue(wdpy, queue) < 0)
+    {
+        goto done;
+    }
+
+    success = EGL_TRUE;
+
+done:
+    if (wrapper != NULL)
+    {
+        wl_proxy_wrapper_destroy(wrapper);
+    }
+    if (!success)
+    {
+        FreeDisplayRegistry(names);
+    }
+    return success;
+}
+
 WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_init)
 {
     WlDisplayInstance *inst = NULL;
+    WlDisplayRegistry names = {};
+    struct wl_event_queue *queue = NULL;
     EGLBoolean success = EGL_FALSE;
 
     inst = calloc(1, sizeof(WlDisplayInstance));
@@ -235,6 +363,45 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
         inst->wdpy = pdpy->native_display;
     }
 
+    queue = wl_display_create_queue(inst->wdpy);
+    if (queue == NULL)
+    {
+        eplSetError(pdpy->platform, EGL_BAD_ALLOC, "wl_display_create_queue failed");
+        goto done;
+    }
+
+    if (!GetDisplayRegistry(inst->wdpy, queue, &names))
+    {
+        eplSetError(pdpy->platform, EGL_BAD_ALLOC, "Failed to get Wayland registry");
+        goto done;
+    }
+
+    if (names.zwp_linux_dmabuf_v1.name == 0 || names.zwp_linux_dmabuf_v1.version < 3)
+    {
+        if (from_init)
+        {
+            eplSetError(pdpy->platform, EGL_BAD_ALLOC, "Server does not support zwp_linux_dmabuf_v1");
+        }
+        goto done;
+    }
+    if (names.zwp_linux_dmabuf_v1.version < 4 && names.wl_drm.name == 0)
+    {
+        /*
+         * We need either zwp_linux_dmabuf_v1 version 4, or wl_drm in order to
+         * get a device from the server.
+         *
+         * Note that if the server supports linear, then it would be possible
+         * to make this work using our PRIME path. However, it's unlikely that
+         * any real-world compositors will support zwp_linux_dmabuf_v1 at
+         * exactly version 3, without also supporting wl_drm.
+         */
+        if (from_init)
+        {
+            eplSetError(pdpy->platform, EGL_BAD_ALLOC, "Server does not support wl_drm or zwp_linux_dmabuf_v1 version 4");
+        }
+        goto done;
+    }
+
     // Pick an arbitrary device to use as a placeholder for an internal EGLDisplay.
     inst->internal_display = eplInternalDisplayRef(eplGetDeviceInternalDisplay(pdpy->platform, EGL_NO_DEVICE_EXT));
     if (inst->internal_display == NULL)
@@ -250,6 +417,9 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
     success = EGL_TRUE;
 
 done:
+    FreeDisplayRegistry(&names);
+    wl_event_queue_destroy(queue);
+
     if (!success)
     {
         eplWlDisplayInstanceUnref(inst);

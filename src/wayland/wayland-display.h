@@ -52,6 +52,14 @@ typedef struct
      * open our own display connection.
      */
     EGLBoolean own_display;
+
+    /**
+     * Contains the global protocol objects that we need.
+     */
+    struct
+    {
+        struct zwp_linux_dmabuf_v1 *dmabuf;
+    } globals;
 } WlDisplayInstance;
 
 EPL_REFCOUNT_DECLARE_TYPE_FUNCS(WlDisplayInstance, eplWlDisplayInstance);

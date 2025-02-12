@@ -17,10 +17,45 @@ dep_gbm = dependency('gbm')
 dep_wayland_client = dependency('wayland-client')
 dep_dl = meson.get_compiler('c').find_library('dl', required : false)
 
+wl_protos = dependency('wayland-protocols', version: '>= 1.34')
+wl_protos_dir = wl_protos.get_variable('pkgdatadir')
+wl_drm_xml = 'wayland-drm.xml'
+wl_dmabuf_xml = join_paths(wl_protos_dir, 'unstable', 'linux-dmabuf', 'linux-dmabuf-unstable-v1.xml')
+wl_drm_syncobj_xml = join_paths(wl_protos_dir, 'staging', 'linux-drm-syncobj', 'linux-drm-syncobj-v1.xml')
+
+wl_scanner = dependency('wayland-scanner', native: true)
+prog_scanner = find_program(wl_scanner.get_variable('wayland_scanner'))
+
+client_header = generator(prog_scanner,
+    output : '@BASENAME@-client-protocol.h',
+    arguments : ['client-header', '@INPUT@', '@OUTPUT@']
+)
+if wl_scanner.version().version_compare('>= 1.14.91')
+    code_arg = 'private-code'
+else
+    code_arg = 'code'
+endif
+code = generator(prog_scanner,
+    output : '@BASENAME@-protocol.c',
+    arguments : [code_arg, '@INPUT@', '@OUTPUT@']
+)
+
+generated_files = [
+  client_header.process(wl_drm_xml),
+  code.process(wl_drm_xml),
+
+  client_header.process(wl_dmabuf_xml),
+  code.process(wl_dmabuf_xml),
+
+  client_header.process(wl_drm_syncobj_xml),
+  code.process(wl_drm_syncobj_xml),
+]
+
 wayland_platform = shared_library('nvidia-egl-wayland2',
   [
     'wayland-platform.c',
     'wayland-display.c',
+    generated_files,
   ],
   include_directories: [ inc_base ],
   c_args : ['-D_GNU_SOURCE'],

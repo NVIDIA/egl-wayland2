@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-project('nvidia-egl-platform-base', 'c',
+project('nvidia-egl-wayland2', 'c',
   version : '0.1',
   default_options : ['c_std=gnu99'],
 )
@@ -30,4 +30,5 @@ if cc.compiles('typeof(int *);', name : 'typeof')
 endif
 
 subdir('src/base')
+subdir('src/wayland')
 

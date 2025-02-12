@@ -20,11 +20,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <errno.h>
 #include <assert.h>
 
 #include "wayland-drm-client-protocol.h"
+
+#include "platform-utils.h"
 
 // The minimum and maximum versions of each protocol that we support.
 static const uint32_t PROTO_DMABUF_VERSION[2] = { 3, 4 };
@@ -529,7 +533,6 @@ static int OpenDrmDevice(EplPlatformData *plat,
     {
         // If this is an NVIDIA device, then find the corresponding
         // EGLDeviceEXT handle.
-        EGLDeviceEXT edev = EGL_NO_DEVICE_EXT;
         if (drmdev->available_nodes & (1 << DRM_NODE_PRIMARY)
                 && drmdev->nodes[DRM_NODE_PRIMARY] != NULL)
         {
@@ -562,6 +565,53 @@ done:
         *ret_egldev = edev;
     }
     return fd;
+}
+
+static size_t LookupDeviceIds(EplPlatformData *plat, EGLDeviceEXT egldev, dev_t device_ids[2])
+{
+    const char *extensions = plat->egl.QueryDeviceStringEXT(egldev, EGL_EXTENSIONS);
+    size_t count = 0;
+    struct stat st;
+
+    if (eplFindExtension("EGL_EXT_device_drm", extensions))
+    {
+        const char *node = plat->egl.QueryDeviceStringEXT(egldev, EGL_DRM_DEVICE_FILE_EXT);
+        if (node == NULL)
+        {
+            return 0;
+        }
+
+        if (stat(node, &st) != 0)
+        {
+            eplSetError(plat, EGL_BAD_ACCESS, "Can't stat %s: %s", node, strerror(errno));
+            return 0;
+        }
+        device_ids[count++] = st.st_rdev;
+    }
+
+    if (eplFindExtension("EGL_EXT_device_drm_render_node", extensions))
+    {
+        const char *node = plat->egl.QueryDeviceStringEXT(egldev, EGL_DRM_RENDER_NODE_FILE_EXT);
+        if (node == NULL)
+        {
+            return 0;
+        }
+
+        if (stat(node, &st) != 0)
+        {
+            eplSetError(plat, EGL_BAD_ACCESS, "Can't stat %s: %s", node, strerror(errno));
+            return 0;
+        }
+        device_ids[count++] = st.st_rdev;
+    }
+
+    if (count == 0)
+    {
+        // This shouldn't happen: We should always at least suport
+        // EGL_EXT_device_drm on every device.
+        eplSetError(plat, EGL_BAD_ALLOC, "Driver error: Can't find device node paths");
+    }
+    return count;
 }
 
 WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_init)
@@ -740,6 +790,20 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
         goto done;
     }
 
+    inst->gbmdev = gbm_create_device(drmFd);
+    if (inst->gbmdev == NULL)
+    {
+        eplSetError(pdpy->platform, EGL_BAD_ALLOC, "Can't open GBM device");
+        goto done;
+    }
+    drmFd = -1;
+
+    inst->render_device_id_count = LookupDeviceIds(pdpy->platform, renderDevice, inst->render_device_id);
+    if (inst->render_device_id_count == 0)
+    {
+        goto done;
+    }
+
     // Pick an arbitrary device to use as a placeholder for an internal EGLDisplay.
     inst->internal_display = eplInternalDisplayRef(eplGetDeviceInternalDisplay(pdpy->platform, renderDevice));
     if (inst->internal_display == NULL)
@@ -758,7 +822,10 @@ done:
     FreeDisplayRegistry(&names);
     wl_event_queue_destroy(queue);
     free(drmNode);
-    close(drmFd);
+    if (drmFd >= 0)
+    {
+        close(drmFd);
+    }
 
     if (!success)
     {
@@ -791,6 +858,16 @@ static void eplWlDisplayInstanceFree(WlDisplayInstance *inst)
         if (inst->own_display && inst->wdpy != NULL)
         {
             wl_display_disconnect(inst->wdpy);
+        }
+
+        if (inst->gbmdev != NULL)
+        {
+            int fd = gbm_device_get_fd(inst->gbmdev);
+            gbm_device_destroy(inst->gbmdev);
+            if (fd >= 0)
+            {
+                close(fd);
+            }
         }
 
         eplWlFormatListFree(inst->default_feedback);

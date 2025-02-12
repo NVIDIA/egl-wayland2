@@ -22,6 +22,8 @@
 #include "wayland-dmabuf.h"
 #include "refcountobj.h"
 
+#include <gbm.h>
+
 /**
  * Contains data for an initialized EGLDisplay.
  */
@@ -66,6 +68,20 @@ typedef struct
      * The set of formats and modifiers that the server supports.
      */
     WlFormatList *default_feedback;
+
+    /**
+     * The GBM device for whichever GPU we're rendering on.
+     */
+    struct gbm_device *gbmdev;
+
+    /**
+     * The device ID for the render device.
+     *
+     * This is an array so that it contains both the primary and render
+     * devices.
+     */
+    dev_t render_device_id[2];
+    size_t render_device_id_count;
 } WlDisplayInstance;
 
 EPL_REFCOUNT_DECLARE_TYPE_FUNCS(WlDisplayInstance, eplWlDisplayInstance);

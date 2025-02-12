@@ -70,14 +70,10 @@ PUBLIC EGLBoolean loadEGLExternalPlatform(int major, int minor,
 
     // Before we do anything else, make sure that we've got a recent enough
     // version of libgbm.
-    // Note that we don't yet reference anything in libgbm, so we won't bring in
-    // libgbm yet.
-    /*
     if (dlsym(RTLD_DEFAULT, "gbm_bo_create_with_modifiers2") == NULL)
     {
         return EGL_FALSE;
     }
-    */
 
     plat = eplPlatformBaseAllocate(major, minor,
         driver, extplatform, EGL_PLATFORM_WAYLAND_KHR, &WL_IMPL_FUNCS,

@@ -70,6 +70,13 @@ typedef struct
     WlFormatList *default_feedback;
 
     /**
+     * The set of formats and modifiers that the driver supports.
+     */
+    WlFormatList *driver_formats;
+
+    EplConfigList *configs;
+
+    /**
      * The GBM device for whichever GPU we're rendering on.
      */
     struct gbm_device *gbmdev;

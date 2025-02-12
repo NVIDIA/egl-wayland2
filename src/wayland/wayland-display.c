@@ -29,6 +29,7 @@
 #include "wayland-drm-client-protocol.h"
 
 #include "platform-utils.h"
+#include "wayland-fbconfig.h"
 
 // The minimum and maximum versions of each protocol that we support.
 static const uint32_t PROTO_DMABUF_VERSION[2] = { 3, 4 };
@@ -816,6 +817,19 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
         goto done;
     }
 
+    inst->driver_formats = eplWlGetDriverFormats(pdpy->platform, inst->internal_display->edpy);
+    if (inst->driver_formats == NULL)
+    {
+        goto done;
+    }
+
+    inst->configs = eplWlInitConfigList(pdpy->platform, inst->internal_display->edpy,
+        inst->default_feedback, inst->driver_formats, EGL_FALSE, EGL_FALSE, from_init);
+    if (inst->configs == NULL)
+    {
+        goto done;
+    }
+
     success = EGL_TRUE;
 
 done:
@@ -871,6 +885,8 @@ static void eplWlDisplayInstanceFree(WlDisplayInstance *inst)
         }
 
         eplWlFormatListFree(inst->default_feedback);
+        eplWlFormatListFree(inst->driver_formats);
+        eplConfigListFree(inst->configs);
 
         if (inst->platform != NULL)
         {

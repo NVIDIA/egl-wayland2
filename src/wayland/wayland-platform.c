@@ -23,6 +23,7 @@
 #include <assert.h>
 
 #include "wayland-display.h"
+#include "wayland-fbconfig.h"
 #include "platform-utils.h"
 
 static const EGLint NEED_PLATFORM_SURFACE_MAJOR = 0;
@@ -185,7 +186,14 @@ const char *eplWlQueryString(EplPlatformData *plat, EplDisplay *pdpy, EGLExtPlat
 
 void *eplWlGetHookFunction(EplPlatformData *plat, const char *name)
 {
-    // Nothing here yet.
+    if (strcmp(name, "eglChooseConfig") == 0)
+    {
+        return eplWlHookChooseConfig;
+    }
+    else if (strcmp(name, "eglGetConfigAttrib") == 0)
+    {
+        return eplWlHookGetConfigAttrib;
+    }
     return NULL;
 }
 

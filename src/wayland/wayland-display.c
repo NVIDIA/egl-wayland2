@@ -19,7 +19,12 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <assert.h>
+
+#include "wayland-drm-client-protocol.h"
 
 // The minimum and maximum versions of each protocol that we support.
 static const uint32_t PROTO_DMABUF_VERSION[2] = { 3, 4 };
@@ -352,12 +357,225 @@ static void *BindGlobalObject(struct wl_registry *registry,
     return proxy;
 }
 
+void on_wl_drm_device(void *data, struct wl_drm *wl_drm, const char *name)
+{
+    char **ptr = data;
+    free(*ptr);
+    *ptr = strdup(name);
+}
+void on_wl_drm_format(void *data, struct wl_drm *wl_drm, uint32_t format) { }
+void on_wl_drm_authenticated(void *data, struct wl_drm *wl_drm) { }
+void on_wl_drm_capabilities(void *data, struct wl_drm *wl_drm, uint32_t value) { }
+static const struct wl_drm_listener INIT_WL_DRM_LISTENER =
+{
+    on_wl_drm_device,
+    on_wl_drm_format,
+    on_wl_drm_authenticated,
+    on_wl_drm_capabilities,
+};
+
+static char *GetServerDrmNode(struct wl_display *wdpy, const WlDisplayRegistry *names)
+{
+    struct wl_event_queue *queue = NULL;
+    struct wl_drm *drm = NULL;
+    char *node = NULL;
+
+    if (names->wl_drm.name != 0)
+    {
+        queue = wl_display_create_queue(wdpy);
+        if (queue == NULL)
+        {
+            goto done;
+        }
+
+        drm = BindGlobalObject(names->registry, names->wl_drm.name, &wl_drm_interface, 1, queue);
+        if (drm == NULL)
+        {
+            goto done;
+        }
+
+        wl_drm_add_listener(drm, &INIT_WL_DRM_LISTENER, &node);
+        wl_display_roundtrip_queue(wdpy, queue);
+    }
+
+done:
+    if (drm != NULL)
+    {
+        wl_drm_destroy(drm);
+    }
+    if (queue != NULL)
+    {
+        wl_event_queue_destroy(queue);
+    }
+
+    return node;
+}
+
+/**
+ * Opens a DRM device node, and looks up the corresponding EGLDeviceEXT handle
+ * if it's an NVIDIA device.
+ *
+ * \param plat The platform data.
+ * \param devId The device to open and check.
+ * \param node An optional device node path. This is used if libdrm is too old
+ *      to support drmGetDeviceFromDevId.
+ * \param from_init True if this is being called from eglInitialize.
+ * \param[out] ret_egldev Returns the EGLDeviceEXT, or EGL_NO_DEVICE_EXT if
+ *      it's not an NVIDIA device.
+ * \return A file descriptor for the device, or -1 on failure.
+ */
+static int OpenDrmDevice(EplPlatformData *plat,
+        dev_t devId,
+        const char *node,
+        EGLBoolean from_init,
+        EGLDeviceEXT *ret_egldev)
+{
+    drmDevice *drmdev = NULL;
+    int isNV = -1;
+    EGLDeviceEXT edev = EGL_NO_DEVICE_EXT;
+    int fd = -1;
+
+    if (plat->priv->drm.GetDeviceFromDevId != NULL)
+    {
+        if (plat->priv->drm.GetDeviceFromDevId(devId, 0, &drmdev) != 0 || drmdev == NULL)
+        {
+            if (from_init)
+            {
+                eplSetError(plat, EGL_BAD_ALLOC, "Failed to get DRM device information");
+            }
+            drmdev = NULL;
+        }
+    }
+
+    if (drmdev == NULL)
+    {
+        if (node == NULL)
+        {
+            if (from_init)
+            {
+                eplSetError(plat, EGL_BAD_ALLOC, "Didn't get device node from server");
+            }
+            goto done;
+        }
+
+        // Either drmGetDeviceFromDevId failed, or it's not available. In
+        // either case, if we have a path from wl_drm, then try using that
+        // instead.
+        fd = open(node, O_RDWR);
+        if (fd < 0)
+        {
+            if (from_init)
+            {
+                eplSetError(plat, EGL_BAD_ALLOC, "Can't open device node %s", node);
+            }
+            goto done;
+        }
+
+        if (drmGetDevice(fd, &drmdev) != 0 || drmdev == NULL)
+        {
+            if (from_init)
+            {
+                eplSetError(plat, EGL_BAD_ALLOC, "Failed to get DRM device information");
+            }
+            goto done;
+        }
+    }
+    assert(drmdev != NULL);
+
+    if (drmdev->bustype == DRM_BUS_PCI)
+    {
+        // If this is a PCI device, then we can just check the vendor ID to
+        // know if it's an NVIDIA device or not.
+        isNV = (drmdev->deviceinfo.pci->vendor_id == 0x10de);
+    }
+
+    // If we didn't open a file descriptor above, then do so now.
+    if (fd < 0 && drmdev->available_nodes & (1 << DRM_NODE_RENDER) && drmdev->nodes[DRM_NODE_RENDER] != NULL)
+    {
+        fd = open(drmdev->nodes[DRM_NODE_RENDER], O_RDWR);
+    }
+    if (fd < 0 && drmdev->available_nodes & (1 << DRM_NODE_PRIMARY) && drmdev->nodes[DRM_NODE_PRIMARY] != NULL)
+    {
+        fd = open(drmdev->nodes[DRM_NODE_PRIMARY], O_RDWR);
+    }
+    if (fd < 0)
+    {
+        eplSetError(plat, EGL_BAD_ALLOC, "Can't open DRM node for device");
+        goto done;
+    }
+
+    if (isNV < 0)
+    {
+        // If we couldn't determine from the PCI info whether this is an NVIDIA
+        // device, then use drmGetVersion.
+        drmVersion *version = drmGetVersion(fd);
+        isNV = 0;
+        if (version != NULL)
+        {
+            if (version->name != NULL)
+            {
+                if (strcmp(version->name, "nvidia-drm") == 0
+                        || strcmp(version->name, "tegra-udrm") == 0
+                        || strcmp(version->name, "tegra") == 0)
+                {
+                    isNV = 1;
+                }
+            }
+            drmFreeVersion(version);
+        }
+    }
+
+    if (isNV)
+    {
+        // If this is an NVIDIA device, then find the corresponding
+        // EGLDeviceEXT handle.
+        EGLDeviceEXT edev = EGL_NO_DEVICE_EXT;
+        if (drmdev->available_nodes & (1 << DRM_NODE_PRIMARY)
+                && drmdev->nodes[DRM_NODE_PRIMARY] != NULL)
+        {
+            edev = eplWlFindDeviceForNode(plat, drmdev->nodes[DRM_NODE_PRIMARY]);
+        }
+        if (edev == EGL_NO_DEVICE_EXT
+                && drmdev->available_nodes & (1 << DRM_NODE_RENDER)
+                && drmdev->nodes[DRM_NODE_RENDER] != NULL)
+        {
+            edev = eplWlFindDeviceForNode(plat, drmdev->nodes[DRM_NODE_RENDER]);
+        }
+        if (edev == EGL_NO_DEVICE_EXT)
+        {
+            // This is an NVIDIA device, but the NVIDIA driver can't open it
+            // for some reason. Bail out.
+            eplSetError(plat, EGL_BAD_ALLOC, "Can't find EGLDeviceEXT handle for device");
+            close(fd);
+            fd = -1;
+            goto done;
+        }
+    }
+
+done:
+    if (drmdev != NULL)
+    {
+        drmFreeDevice(&drmdev);
+    }
+    if (ret_egldev != NULL)
+    {
+        *ret_egldev = edev;
+    }
+    return fd;
+}
+
 WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_init)
 {
     WlDisplayInstance *inst = NULL;
     WlDisplayRegistry names = {};
     struct wl_event_queue *queue = NULL;
     dev_t mainDevice = 0;
+    char *drmNode = NULL;
+    int drmFd = -1;
+    EGLDeviceEXT serverDevice = EGL_NO_DEVICE_EXT;
+    EGLDeviceEXT renderDevice = EGL_NO_DEVICE_EXT;
+    const WlDmaBufFormat *fmt;
+    EGLBoolean supportsLinear = EGL_FALSE;
     EGLBoolean success = EGL_FALSE;
 
     inst = calloc(1, sizeof(WlDisplayInstance));
@@ -449,8 +667,81 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
         goto done;
     }
 
+    // Get a device node path via wl_drm, if it's available. We'll use that as
+    // a fallback if we can't look up the device by a dev_t.
+    drmNode = GetServerDrmNode(inst->wdpy, &names);
+
+    drmFd = OpenDrmDevice(pdpy->platform, mainDevice,
+            drmNode, from_init, &serverDevice);
+    if (drmFd < 0)
+    {
+        goto done;
+    }
+
+    // Check if the server supports linear. If so, then we could support PRIME.
+    fmt = eplWlDmaBufFormatFind(inst->default_feedback->formats,
+            inst->default_feedback->num_formats, DRM_FORMAT_XRGB8888);
+    if (fmt != NULL)
+    {
+        supportsLinear = eplWlDmaBufFormatSupportsModifier(fmt, DRM_FORMAT_MOD_LINEAR);
+    }
+
+    if (pdpy->priv->requested_device != EGL_NO_DEVICE_EXT)
+    {
+        // The user or app requested a particular device, so try to use it if
+        // possible.
+        if (pdpy->priv->requested_device == serverDevice || supportsLinear)
+        {
+            renderDevice = pdpy->priv->requested_device;
+        }
+    }
+    else
+    {
+        // If the user/app didn't request a specific device, but the server is
+        // running on an NVIDIA device, then use the server's device.
+        renderDevice = serverDevice;
+    }
+
+    if (renderDevice == EGL_NO_DEVICE_EXT && pdpy->priv->enable_alt_device)
+    {
+        // If we didn't find a device above, but we're allowed to use an
+        // alternate, then do so.
+        if (serverDevice != EGL_NO_DEVICE_EXT)
+        {
+            // We can always render to the server's device
+            renderDevice = serverDevice;
+        }
+        else if (supportsLinear)
+        {
+            EGLint num = 0;
+            if (!pdpy->platform->egl.QueryDevicesEXT(1, &renderDevice, &num) || num <= 0)
+            {
+                renderDevice = EGL_NO_DEVICE_EXT;
+            }
+        }
+    }
+
+    if (renderDevice != serverDevice)
+    {
+        // PRIME isn't implemented yet, so disable this case.
+        renderDevice = NULL;
+    }
+
+    if (renderDevice == EGL_NO_DEVICE_EXT)
+    {
+        if (from_init)
+        {
+            eplSetError(pdpy->platform, EGL_BAD_ACCESS, "Display server is not running on an NVIDIA device");
+        }
+        else if (pdpy->priv->device_attrib != EGL_NO_DEVICE_EXT)
+        {
+            eplSetError(pdpy->platform, EGL_BAD_MATCH, "GPU offloading from %p is not supported", pdpy->priv->device_attrib);
+        }
+        goto done;
+    }
+
     // Pick an arbitrary device to use as a placeholder for an internal EGLDisplay.
-    inst->internal_display = eplInternalDisplayRef(eplGetDeviceInternalDisplay(pdpy->platform, EGL_NO_DEVICE_EXT));
+    inst->internal_display = eplInternalDisplayRef(eplGetDeviceInternalDisplay(pdpy->platform, renderDevice));
     if (inst->internal_display == NULL)
     {
         goto done;
@@ -466,6 +757,8 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
 done:
     FreeDisplayRegistry(&names);
     wl_event_queue_destroy(queue);
+    free(drmNode);
+    close(drmFd);
 
     if (!success)
     {

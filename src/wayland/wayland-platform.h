@@ -18,12 +18,70 @@
 #ifndef WAYLAND_PLATFORM_H
 #define WAYLAND_PLATFORM_H
 
+#include <stdint.h>
+#include <sys/types.h>
+
 #include <wayland-client-core.h>
 #include <wayland-client-protocol.h>
 
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 
+#include <xf86drm.h>
+
 #include "platform-base.h"
+#include "platform-impl.h"
+#include "driver-platform-surface.h"
+
+struct _EplImplPlatform
+{
+    struct
+    {
+        PFNEGLQUERYDISPLAYATTRIBKHRPROC QueryDisplayAttribKHR;
+        PFNEGLSWAPINTERVALPROC SwapInterval;
+        PFNEGLQUERYDMABUFFORMATSEXTPROC QueryDmaBufFormatsEXT;
+        PFNEGLQUERYDMABUFMODIFIERSEXTPROC QueryDmaBufModifiersEXT;
+        PFNEGLCREATESYNCPROC CreateSync;
+        PFNEGLDESTROYSYNCPROC DestroySync;
+        PFNEGLWAITSYNCPROC WaitSync;
+        PFNEGLDUPNATIVEFENCEFDANDROIDPROC DupNativeFenceFDANDROID;
+        void (* Flush) (void);
+        void (* Finish) (void);
+
+        pfn_eglPlatformImportColorBufferNVX PlatformImportColorBufferNVX;
+        pfn_eglPlatformFreeColorBufferNVX PlatformFreeColorBufferNVX;
+        pfn_eglPlatformCreateSurfaceNVX PlatformCreateSurfaceNVX;
+        pfn_eglPlatformSetColorBuffersNVX PlatformSetColorBuffersNVX;
+        pfn_eglPlatformGetConfigAttribNVX PlatformGetConfigAttribNVX;
+        pfn_eglPlatformCopyColorBufferNVX PlatformCopyColorBufferNVX;
+        pfn_eglPlatformAllocColorBufferNVX PlatformAllocColorBufferNVX;
+        pfn_eglPlatformExportColorBufferNVX PlatformExportColorBufferNVX;
+    } egl;
+
+    struct
+    {
+        int (* GetDeviceFromDevId) (dev_t dev_id, uint32_t flags, drmDevicePtr *device);
+        int (* GetCap) (int fd, uint64_t capability, uint64_t *value);
+        int (* SyncobjCreate) (int fd, uint32_t flags, uint32_t *handle);
+        int (* SyncobjDestroy) (int fd, uint32_t handle);
+        int (* SyncobjHandleToFD) (int fd, uint32_t handle, int *obj_fd);
+        int (* SyncobjFDToHandle) (int fd, int obj_fd, uint32_t *handle);
+        int (* SyncobjImportSyncFile) (int fd, uint32_t handle, int sync_file_fd);
+        int (* SyncobjExportSyncFile) (int fd, uint32_t handle, int *sync_file_fd);
+
+        int (* SyncobjTimelineSignal) (int fd, const uint32_t *handles,
+                            uint64_t *points, uint32_t handle_count);
+        int (* SyncobjTimelineWait) (int fd, uint32_t *handles, uint64_t *points,
+                          unsigned num_handles,
+                          int64_t timeout_nsec, unsigned flags,
+                          uint32_t *first_signaled);
+        int (* SyncobjTransfer) (int fd,
+                          uint32_t dst_handle, uint64_t dst_point,
+                          uint32_t src_handle, uint64_t src_point,
+                          uint32_t flags);
+    } drm;
+
+    EGLBoolean timeline_funcs_supported;
+};
 
 #endif // WAYLAND_PLATFORM_H

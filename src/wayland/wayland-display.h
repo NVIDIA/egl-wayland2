@@ -1,0 +1,90 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#ifndef WAYLAND_DISPLAY_H
+#define WAYLAND_DISPLAY_H
+
+#include "wayland-platform.h"
+#include "refcountobj.h"
+
+/**
+ * Contains data for an initialized EGLDisplay.
+ */
+typedef struct
+{
+    EplRefCount refcount;
+
+    /**
+     * The internal (driver) EGLDisplay.
+     */
+    EplInternalDisplay *internal_display;
+} WlDisplayInstance;
+
+EPL_REFCOUNT_DECLARE_TYPE_FUNCS(WlDisplayInstance, eplWlDisplayInstance);
+
+struct _EplImplDisplay
+{
+    /**
+     * The EGLDeviceEXT handle that was specified with an EGL_DEVICE_EXT
+     * attribute.
+     */
+    EGLDeviceEXT device_attrib;
+
+    /**
+     * The EGLDeviceEXT handle that we should use for rendering, or
+     * EGL_NO_DEVICE_EXT to pick one during eglInitialize.
+     *
+     * This is set based on either the EGL_DEVICE_EXT attribute or based on
+     * environment variables.
+     */
+    EGLDeviceEXT requested_device;
+
+    /**
+     * If true, allow picking a different GPU to do rendering.
+     *
+     * This is set based on the __NV_PRIME_RENDER_OFFLOAD environment variable.
+     *
+     * If the normal device (\c requested_device if it's set, the server's
+     * device otherwise) isn't usable, then the \c enable_alt_device flag tells
+     * eplWlDisplayInstanceCreate to pick a different device rather than just
+     * fail.
+     *
+     * Note that this flag doesn't mean that we will use the PRIME presentation
+     * path. It's possible that we'd pick the same device as the server anyway.
+     *
+     * Likewise, if the application passed an EGL_DISPLAY_EXT attribute, then
+     * we might end up doing cross-device presentation even if the user doesn't
+     * set __NV_PRIME_RENDER_OFFLOAD.
+     */
+    EGLBoolean enable_alt_device;
+
+    /**
+     * A pointer to the WlDisplayInstance struct, or NULL if this display isn't initialized.
+     */
+    WlDisplayInstance *inst;
+};
+
+EGLBoolean eplWlIsSameDisplay(EplPlatformData *plat, EplDisplay *pdpy, EGLint platform,
+        void *native_display, const EGLAttrib *attribs);
+EGLBoolean eplWlGetPlatformDisplay(EplPlatformData *plat, EplDisplay *pdpy,
+        void *native_display, const EGLAttrib *attribs,
+        struct glvnd_list *existing_displays);
+void eplWlCleanupDisplay(EplDisplay *pdpy);
+EGLBoolean eplWlInitializeDisplay(EplPlatformData *plat, EplDisplay *pdpy, EGLint *major, EGLint *minor);
+void eplWlTerminateDisplay(EplPlatformData *plat, EplDisplay *pdpy);
+
+#endif // WAYLAND_DISPLAY_H

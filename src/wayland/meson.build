@@ -20,6 +20,7 @@ dep_dl = meson.get_compiler('c').find_library('dl', required : false)
 wayland_platform = shared_library('nvidia-egl-wayland2',
   [
     'wayland-platform.c',
+    'wayland-display.c',
   ],
   include_directories: [ inc_base ],
   c_args : ['-D_GNU_SOURCE'],

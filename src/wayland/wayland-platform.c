@@ -18,8 +18,12 @@
 #include "wayland-platform.h"
 
 #include <stdlib.h>
+#include <string.h>
 #include <dlfcn.h>
 #include <assert.h>
+
+#include "wayland-display.h"
+#include "platform-utils.h"
 
 static const EGLint NEED_PLATFORM_SURFACE_MAJOR = 0;
 static const EGLint NEED_PLATFORM_SURFACE_MINOR = 1;
@@ -27,14 +31,6 @@ static const EGLint NEED_PLATFORM_SURFACE_MINOR = 1;
 static void eplWlCleanupPlatform(EplPlatformData *plat);
 static const char *eplWlQueryString(EplPlatformData *plat, EplDisplay *pdpy, EGLExtPlatformString name);
 static void *eplWlGetHookFunction(EplPlatformData *plat, const char *name);
-static EGLBoolean eplWlIsSameDisplay(EplPlatformData *plat, EplDisplay *pdpy, EGLint platform,
-        void *native_display, const EGLAttrib *attribs);
-static EGLBoolean eplWlGetPlatformDisplay(EplPlatformData *plat, EplDisplay *pdpy,
-        void *native_display, const EGLAttrib *attribs,
-        struct glvnd_list *existing_displays);
-static void eplWlCleanupDisplay(EplDisplay *pdpy);
-static EGLBoolean eplWlInitializeDisplay(EplPlatformData *plat, EplDisplay *pdpy, EGLint *major, EGLint *minor);
-static void eplWlTerminateDisplay(EplPlatformData *plat, EplDisplay *pdpy);
 
 static void eplWlDestroyWindow(EplDisplay *pdpy, EplSurface *psurf,
         const struct glvnd_list *existing_surfaces) { }
@@ -197,29 +193,47 @@ void *eplWlGetHookFunction(EplPlatformData *plat, const char *name)
     return NULL;
 }
 
-EGLBoolean eplWlIsSameDisplay(EplPlatformData *plat, EplDisplay *pdpy, EGLint platform,
-        void *native_display, const EGLAttrib *attribs)
+EGLDeviceEXT eplWlFindDeviceForNode(EplPlatformData *plat, const char *node)
 {
-    return EGL_FALSE;
-}
+    EGLDeviceEXT *devices = NULL;
+    EGLDeviceEXT found = EGL_NO_DEVICE_EXT;
+    EGLint num = 0;
+    int i;
 
-EGLBoolean eplWlGetPlatformDisplay(EplPlatformData *plat, EplDisplay *pdpy,
-        void *native_display, const EGLAttrib *attribs,
-        struct glvnd_list *existing_displays)
-{
-    return EGL_FALSE;
-}
+    if (!plat->egl.QueryDevicesEXT(0, NULL, &num) || num <= 0)
+    {
+        return EGL_NO_DEVICE_EXT;
+    }
 
-void eplWlCleanupDisplay(EplDisplay *pdpy)
-{
-}
+    devices = alloca(num * sizeof(EGLDeviceEXT));
+    if (!plat->egl.QueryDevicesEXT(num, devices, &num) || num <= 0)
+    {
+        return EGL_NO_DEVICE_EXT;
+    }
 
-EGLBoolean eplWlInitializeDisplay(EplPlatformData *plat, EplDisplay *pdpy, EGLint *major, EGLint *minor)
-{
-    return EGL_FALSE;
-}
+    for (i=0; i<num; i++)
+    {
+        const char *extensions = plat->egl.QueryDeviceStringEXT(devices[i], EGL_EXTENSIONS);
+        if (eplFindExtension("EGL_EXT_device_drm", extensions))
+        {
+            const char *str = plat->egl.QueryDeviceStringEXT(devices[i], EGL_DRM_DEVICE_FILE_EXT);
+            if (str != NULL && strcmp(str, node) == 0)
+            {
+                found = devices[i];
+                break;
+            }
+        }
+        if (eplFindExtension("EGL_EXT_device_drm_render_node", extensions))
+        {
+            const char *str = plat->egl.QueryDeviceStringEXT(devices[i], EGL_DRM_RENDER_NODE_FILE_EXT);
+            if (str != NULL && strcmp(str, node) == 0)
+            {
+                found = devices[i];
+                break;
+            }
+        }
+    }
 
-void eplWlTerminateDisplay(EplPlatformData *plat, EplDisplay *pdpy)
-{
+    return found;
 }
 

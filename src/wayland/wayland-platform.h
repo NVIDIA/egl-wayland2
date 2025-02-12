@@ -84,4 +84,9 @@ struct _EplImplPlatform
     EGLBoolean timeline_funcs_supported;
 };
 
+/**
+ * Finds an EGLDeviceEXT handle that corresponds to a given DRI device node.
+ */
+EGLDeviceEXT eplWlFindDeviceForNode(EplPlatformData *plat, const char *node);
+
 #endif // WAYLAND_PLATFORM_H

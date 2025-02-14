@@ -24,6 +24,8 @@
 
 #include <gbm.h>
 
+#include "linux-drm-syncobj-v1-client-protocol.h"
+
 /**
  * Contains data for an initialized EGLDisplay.
  */
@@ -62,6 +64,7 @@ typedef struct
     struct
     {
         struct zwp_linux_dmabuf_v1 *dmabuf;
+        struct wp_linux_drm_syncobj_manager_v1 *syncobj;
     } globals;
 
     /**
@@ -89,6 +92,16 @@ typedef struct
      */
     dev_t render_device_id[2];
     size_t render_device_id_count;
+
+    /**
+     * True if the driver supports the EGL_ANDROID_native_fence_sync extension.
+     */
+    EGLBoolean supports_EGL_ANDROID_native_fence_sync;
+
+    /**
+     * True if we can use implicit sync.
+     */
+    EGLBoolean supports_implicit_sync;
 } WlDisplayInstance;
 
 EPL_REFCOUNT_DECLARE_TYPE_FUNCS(WlDisplayInstance, eplWlDisplayInstance);

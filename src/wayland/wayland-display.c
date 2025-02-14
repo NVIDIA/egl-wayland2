@@ -615,6 +615,30 @@ static size_t LookupDeviceIds(EplPlatformData *plat, EGLDeviceEXT egldev, dev_t 
     return count;
 }
 
+static EGLBoolean CheckExplicitSyncSupport(EplPlatformData *plat, int drmfd)
+{
+    uint64_t cap = 0;
+    const char *env;
+
+    if (!plat->priv->timeline_funcs_supported)
+    {
+        return EGL_FALSE;
+    }
+
+    env = getenv("__NV_DISABLE_EXPLICIT_SYNC");
+    if (env != NULL && atoi(env) != 0)
+    {
+        return EGL_FALSE;
+    }
+
+    if (plat->priv->drm.GetCap(drmfd, DRM_CAP_SYNCOBJ_TIMELINE, &cap) != 0 || cap == 0)
+    {
+        return EGL_FALSE;
+    }
+
+    return EGL_TRUE;
+}
+
 WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_init)
 {
     WlDisplayInstance *inst = NULL;
@@ -627,6 +651,7 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
     EGLDeviceEXT renderDevice = EGL_NO_DEVICE_EXT;
     const WlDmaBufFormat *fmt;
     EGLBoolean supportsLinear = EGL_FALSE;
+    const char *ext = NULL;
     EGLBoolean success = EGL_FALSE;
 
     inst = calloc(1, sizeof(WlDisplayInstance));
@@ -815,6 +840,20 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
     if (!eplInitializeInternalDisplay(pdpy->platform, inst->internal_display, NULL, NULL))
     {
         goto done;
+    }
+
+    ext = pdpy->platform->egl.QueryString(inst->internal_display->edpy, EGL_EXTENSIONS);
+    inst->supports_EGL_ANDROID_native_fence_sync = eplFindExtension("EGL_ANDROID_native_fence_sync", ext);
+
+    if (inst->supports_EGL_ANDROID_native_fence_sync
+            && names.wp_linux_drm_syncobj_manager_v1.name != 0
+            && CheckExplicitSyncSupport(pdpy->platform, gbm_device_get_fd(inst->gbmdev)))
+    {
+        inst->globals.syncobj = BindGlobalObject(names.registry,
+                names.wp_linux_drm_syncobj_manager_v1.name,
+                &wp_linux_drm_syncobj_manager_v1_interface,
+                names.wp_linux_drm_syncobj_manager_v1.version,
+                NULL);
     }
 
     inst->driver_formats = eplWlGetDriverFormats(pdpy->platform, inst->internal_display->edpy);

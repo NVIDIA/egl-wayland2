@@ -35,9 +35,6 @@ static void eplWlCleanupPlatform(EplPlatformData *plat);
 static const char *eplWlQueryString(EplPlatformData *plat, EplDisplay *pdpy, EGLExtPlatformString name);
 static void *eplWlGetHookFunction(EplPlatformData *plat, const char *name);
 
-static void eplWlDestroyWindow(EplDisplay *pdpy, EplSurface *psurf,
-        const struct glvnd_list *existing_surfaces) { }
-
 /**
  * True if the kernel might support DMA_BUF_IOCTL_IMPORT_SYNC_FILE and
  * DMA_BUF_IOCTL_EXPORT_SYNC_FILE.
@@ -58,9 +55,9 @@ static const EplImplFuncs WL_IMPL_FUNCS =
     .CleanupDisplay = eplWlCleanupDisplay,
     .InitializeDisplay = eplWlInitializeDisplay,
     .TerminateDisplay = eplWlTerminateDisplay,
-    .CreateWindowSurface = NULL,
+    .CreateWindowSurface = eplWlCreateWindowSurface,
     .DestroySurface = eplWlDestroyWindow,
-    .SwapBuffers = NULL,
+    .SwapBuffers = eplWlSwapBuffers,
 };
 
 static EGLBoolean LoadProcHelper(EplPlatformData *plat, void *handle, void **ptr, const char *name)

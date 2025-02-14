@@ -108,4 +108,14 @@ EGLBoolean eplWlImportDmaBufSyncFile(int dmabuf, int syncfd);
  */
 int eplWlExportDmaBufSyncFile(int dmabuf);
 
+EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, EplSurface *psurf,
+        EGLConfig config, void *native_surface, const EGLAttrib *attribs, EGLBoolean create_platform,
+        const struct glvnd_list *existing_surfaces);
+
+void eplWlDestroyWindow(EplDisplay *pdpy, EplSurface *psurf,
+            const struct glvnd_list *existing_surfaces);
+
+EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
+        EplSurface *psurf, const EGLint *rects, EGLint n_rects);
+
 #endif // WAYLAND_PLATFORM_H

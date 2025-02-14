@@ -89,4 +89,23 @@ struct _EplImplPlatform
  */
 EGLDeviceEXT eplWlFindDeviceForNode(EplPlatformData *plat, const char *node);
 
+/**
+ * A wrapper around the DMA_BUF_IOCTL_IMPORT_SYNC_FILE ioctl.
+ *
+ * \param dmabuf The dma-buf to modify.
+ * \param syncfd The sync file to attach as the write fence.
+ *
+ * \return EGL_TRUE on success, or EGL_FALSE on failure.
+ */
+EGLBoolean eplWlImportDmaBufSyncFile(int dmabuf, int syncfd);
+
+/**
+ * A wrapper around the DMA_BUF_IOCTL_EXPORT_SYNC_FILE ioctl.
+ *
+ * \param dmabuf The dma-buf to get a fence from.
+ *
+ * \return The sync file for the read fence, or -1 on failure.
+ */
+int eplWlExportDmaBufSyncFile(int dmabuf);
+
 #endif // WAYLAND_PLATFORM_H

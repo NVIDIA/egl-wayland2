@@ -20,11 +20,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <dlfcn.h>
+#include <errno.h>
 #include <assert.h>
 
 #include "wayland-display.h"
 #include "wayland-fbconfig.h"
 #include "platform-utils.h"
+#include "dma-buf.h"
 
 static const EGLint NEED_PLATFORM_SURFACE_MAJOR = 0;
 static const EGLint NEED_PLATFORM_SURFACE_MINOR = 1;
@@ -35,6 +37,16 @@ static void *eplWlGetHookFunction(EplPlatformData *plat, const char *name);
 
 static void eplWlDestroyWindow(EplDisplay *pdpy, EplSurface *psurf,
         const struct glvnd_list *existing_surfaces) { }
+
+/**
+ * True if the kernel might support DMA_BUF_IOCTL_IMPORT_SYNC_FILE and
+ * DMA_BUF_IOCTL_EXPORT_SYNC_FILE.
+ *
+ * There's no direct way to query that support, so instead, if an ioctl fails,
+ * then we set this flag to false so that we don't waste time trying again.
+ */
+static EGLBoolean import_sync_file_supported = EGL_TRUE;
+static pthread_mutex_t import_sync_file_supported_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static const EplImplFuncs WL_IMPL_FUNCS =
 {
@@ -241,3 +253,71 @@ EGLDeviceEXT eplWlFindDeviceForNode(EplPlatformData *plat, const char *node)
     return found;
 }
 
+/**
+ * Returns true if the kernel might support DMA_BUF_IOCTL_IMPORT_SYNC_FILE and
+ * DMA_BUF_IOCTL_EXPORT_SYNC_FILE.
+ *
+ * Note that we don't actually know whether it does until we try to use them,
+ * so this really just provides an early-out to some cases.
+ */
+static EGLBoolean eplWlCheckImportSyncFileSupported(void)
+{
+    EGLBoolean ret;
+    pthread_mutex_lock(&import_sync_file_supported_mutex);
+    ret = import_sync_file_supported;
+    pthread_mutex_unlock(&import_sync_file_supported_mutex);
+    return ret;
+}
+
+static void eplWlSetImportSyncFileUnsupported(void)
+{
+    pthread_mutex_lock(&import_sync_file_supported_mutex);
+    import_sync_file_supported = EGL_FALSE;
+    pthread_mutex_unlock(&import_sync_file_supported_mutex);
+}
+
+EGLBoolean eplWlImportDmaBufSyncFile(int dmabuf, int syncfd)
+{
+    EGLBoolean ret = EGL_FALSE;
+
+    if (eplWlCheckImportSyncFileSupported())
+    {
+        struct dma_buf_import_sync_file params = {};
+
+        params.flags = DMA_BUF_SYNC_WRITE;
+        params.fd = syncfd;
+        if (drmIoctl(dmabuf, DMA_BUF_IOCTL_IMPORT_SYNC_FILE, &params) == 0)
+        {
+            ret = EGL_TRUE;
+        }
+        else if (errno == ENOTTY || errno == EBADF || errno == ENOSYS)
+        {
+            eplWlSetImportSyncFileUnsupported();
+        }
+    }
+
+    return ret;
+}
+
+int eplWlExportDmaBufSyncFile(int dmabuf)
+{
+    int fd = -1;
+
+    if (eplWlCheckImportSyncFileSupported())
+    {
+        struct dma_buf_export_sync_file params = {};
+        params.flags = DMA_BUF_SYNC_WRITE;
+        params.fd = -1;
+
+        if (drmIoctl(dmabuf, DMA_BUF_IOCTL_EXPORT_SYNC_FILE, &params) == 0)
+        {
+            fd = params.fd;
+        }
+        else if (errno == ENOTTY || errno == EBADF || errno == ENOSYS)
+        {
+            eplWlSetImportSyncFileUnsupported();
+        }
+    }
+
+    return fd;
+}

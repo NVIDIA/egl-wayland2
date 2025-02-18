@@ -248,6 +248,18 @@ done:
 static EGLBoolean IsMemoryReadable(const void *p, size_t len)
 {
     int fds[2], result = -1;
+
+    /*
+     * If the address is below some small-ish value, then assume it's not
+     * readable. This is mainly useful as an early-out when we're trying to
+     * figure out if a wl_egl_window starts with a version number or a
+     * wl_surface.
+     */
+    if (((uintptr_t) p) < 256)
+    {
+        return EGL_FALSE;
+    }
+
     if (pipe(fds) == -1) {
         return EGL_FALSE;
     }

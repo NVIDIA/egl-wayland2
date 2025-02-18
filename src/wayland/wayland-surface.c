@@ -40,6 +40,8 @@
 #include "wayland-swapchain.h"
 #include "wayland-dmabuf.h"
 
+static const int WL_EGL_WINDOW_DESTROY_CALLBACK_SINCE = 3;
+
 struct _EplImplSurface
 {
     /// A pointer back to the owning display.
@@ -324,6 +326,36 @@ static EGLBoolean GetWlEglWindowVersionAndSurface(struct wl_egl_window *window,
     return EGL_TRUE;
 }
 
+static void NativeResizeCallback(struct wl_egl_window *native, void *param)
+{
+    EplSurface *psurf = param;
+    if (psurf == NULL || psurf->priv == NULL)
+    {
+        return;
+    }
+
+    if (native->width > 0 && native->height > 0)
+    {
+        pthread_mutex_lock(&psurf->priv->params.mutex);
+        psurf->priv->params.pending_width = native->width;
+        psurf->priv->params.pending_height = native->height;
+        pthread_mutex_unlock(&psurf->priv->params.mutex);
+    }
+}
+
+static void NativeDestroyWindowCallback(void *param)
+{
+    EplSurface *psurf = param;
+    if (psurf == NULL || psurf->priv == NULL)
+    {
+        return;
+    }
+
+    pthread_mutex_lock(&psurf->priv->params.mutex);
+    psurf->priv->params.native_window = NULL;
+    pthread_mutex_unlock(&psurf->priv->params.mutex);
+}
+
 EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, EplSurface *psurf,
         EGLConfig config, void *native_surface, const EGLAttrib *attribs, EGLBoolean create_platform,
         const struct glvnd_list *existing_surfaces)
@@ -409,8 +441,8 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
 
     priv->params.native_window = window;
     priv->params.swap_interval = 1;
-    priv->params.pending_width = window->width;
-    priv->params.pending_height = window->height;
+    priv->params.pending_width = (window->width > 0 ? window->width : 1);
+    priv->params.pending_height = (window->height > 0 ? window->height : 1);
     priv->current.queue = wl_display_create_queue(inst->wdpy);
     if (priv->current.queue == NULL)
     {
@@ -457,7 +489,12 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
         goto done;
     }
 
-    // TODO: Set up the native resize and destroy callbacks here.
+    window->driver_private = psurf;
+    window->resize_callback = NativeResizeCallback;
+    if (windowVersion >= WL_EGL_WINDOW_DESTROY_CALLBACK_SINCE)
+    {
+        window->destroy_window_callback = NativeDestroyWindowCallback;
+    }
 
 done:
     if (internalSurface == EGL_NO_SURFACE)
@@ -492,6 +529,16 @@ void eplWlDestroyWindow(EplDisplay *pdpy, EplSurface *psurf,
 
         psurf->priv->inst->platform->egl.DestroySurface(psurf->priv->inst->internal_display->edpy, psurf->internal_surface);
         psurf->internal_surface = EGL_NO_SURFACE;
+    }
+
+    if (psurf->priv->params.native_window != NULL)
+    {
+        psurf->priv->params.native_window->resize_callback = NULL;
+        if (psurf->priv->native_window_version >= WL_EGL_WINDOW_DESTROY_CALLBACK_SINCE)
+        {
+            psurf->priv->params.native_window->destroy_window_callback = NULL;
+        }
+        psurf->priv->params.native_window->driver_private = NULL;
     }
 
     if (psurf->priv->current.swapchain != NULL)

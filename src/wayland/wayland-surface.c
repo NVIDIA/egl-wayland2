@@ -497,14 +497,7 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
     psurf->priv = priv;
     priv->current.surface_modifiers = (uint64_t *) (priv + 1);
     priv->inst = eplWlDisplayInstanceRef(inst);
-    priv->wsurf = wsurf;
-    priv->native_window_version = windowVersion;
-    priv->driver_format = driver_format;
 
-    priv->params.native_window = window;
-    priv->params.swap_interval = 1;
-    priv->params.pending_width = (window->width > 0 ? window->width : 1);
-    priv->params.pending_height = (window->height > 0 ? window->height : 1);
     snprintf(queue_name, sizeof(queue_name), "EGLSurface(%p)", wsurf);
     priv->current.queue = wl_display_create_queue_with_name(inst->wdpy, queue_name);
     if (priv->current.queue == NULL)
@@ -513,9 +506,25 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
         goto done;
     }
 
+    priv->wsurf = wl_proxy_create_wrapper(wsurf);
+    if (priv->wsurf == NULL)
+    {
+        eplSetError(plat, EGL_BAD_ALLOC, "Failed to create internal wl_surface wrapper");
+        goto done;
+    }
+    wl_proxy_set_queue((struct wl_proxy *) priv->wsurf, priv->current.queue);
+
+    priv->native_window_version = windowVersion;
+    priv->driver_format = driver_format;
+
+    priv->params.native_window = window;
+    priv->params.swap_interval = 1;
+    priv->params.pending_width = (window->width > 0 ? window->width : 1);
+    priv->params.pending_height = (window->height > 0 ? window->height : 1);
+
     if (inst->globals.syncobj != NULL)
     {
-        priv->current.syncobj = wp_linux_drm_syncobj_manager_v1_get_surface(inst->globals.syncobj, wsurf);
+        priv->current.syncobj = wp_linux_drm_syncobj_manager_v1_get_surface(inst->globals.syncobj, priv->wsurf);
         if (priv->current.syncobj == NULL)
         {
             goto done;
@@ -592,6 +601,11 @@ void eplWlDestroyWindow(EplDisplay *pdpy, EplSurface *psurf,
 
         psurf->priv->inst->platform->egl.DestroySurface(psurf->priv->inst->internal_display->edpy, psurf->internal_surface);
         psurf->internal_surface = EGL_NO_SURFACE;
+    }
+
+    if (psurf->priv->wsurf != NULL)
+    {
+        wl_proxy_wrapper_destroy(psurf->priv->wsurf);
     }
 
     if (psurf->priv->params.native_window != NULL)

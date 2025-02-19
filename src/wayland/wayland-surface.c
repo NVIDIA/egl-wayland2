@@ -368,6 +368,54 @@ static void NativeDestroyWindowCallback(void *param)
     pthread_mutex_unlock(&psurf->priv->params.mutex);
 }
 
+static void SetWindowSwapchain(EplSurface *psurf, WlSwapChain *swapchain)
+{
+    EGLAttrib buffers[] =
+    {
+        GL_BACK, (EGLAttrib) swapchain->render_buffer,
+        EGL_NONE
+    };
+    if (psurf->priv->inst->platform->priv->egl.PlatformSetColorBuffersNVX(
+                psurf->priv->inst->internal_display->edpy,
+                psurf->internal_surface, buffers))
+    {
+        eplWlSwapChainDestroy(psurf->priv->inst, psurf->priv->current.swapchain);
+        psurf->priv->current.swapchain = swapchain;
+        psurf->priv->current.force_realloc = EGL_FALSE;
+    }
+    else
+    {
+        // Free the new swapchain. We'll try again next time.
+        eplWlSwapChainDestroy(psurf->priv->inst, swapchain);
+        psurf->priv->current.force_realloc = EGL_TRUE;
+    }
+}
+
+static void WindowUpdateCallback(void *param)
+{
+    EplSurface *psurf = param;
+    WlSwapChain *swapchain = NULL;
+
+    pthread_mutex_lock(&psurf->priv->params.mutex);
+    if (psurf->priv->params.skip_update_callback != 0
+            || psurf->priv->params.native_window == NULL)
+    {
+        pthread_mutex_unlock(&psurf->priv->params.mutex);
+        return;
+    }
+    pthread_mutex_unlock(&psurf->priv->params.mutex);
+
+    if (!SwapChainRealloc(psurf, EGL_FALSE, &swapchain))
+    {
+        return;
+    }
+
+    if (swapchain != NULL)
+    {
+        SetWindowSwapchain(psurf, swapchain);
+    }
+}
+
 EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, EplSurface *psurf,
         EGLConfig config, void *native_surface, const EGLAttrib *attribs, EGLBoolean create_platform,
         const struct glvnd_list *existing_surfaces)
@@ -384,8 +432,8 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
     EGLAttrib platformAttribs[] =
     {
         GL_BACK, 0,
-        EGL_PLATFORM_SURFACE_UPDATE_CALLBACK_NVX, (EGLAttrib) NULL,
-        EGL_PLATFORM_SURFACE_UPDATE_CALLBACK_PARAM_NVX, (EGLAttrib) NULL,
+        EGL_PLATFORM_SURFACE_UPDATE_CALLBACK_NVX, (EGLAttrib) WindowUpdateCallback,
+        EGL_PLATFORM_SURFACE_UPDATE_CALLBACK_PARAM_NVX, (EGLAttrib) psurf,
         EGL_NONE
     };
 

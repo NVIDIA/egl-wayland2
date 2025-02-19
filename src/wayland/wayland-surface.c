@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <dlfcn.h>
@@ -420,6 +421,7 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
         EGLConfig config, void *native_surface, const EGLAttrib *attribs, EGLBoolean create_platform,
         const struct glvnd_list *existing_surfaces)
 {
+    char queue_name[64];
     const EplSurface *otherSurf = NULL;
     WlDisplayInstance *inst = pdpy->priv->inst;
     EplImplSurface *priv = NULL;
@@ -503,7 +505,8 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
     priv->params.swap_interval = 1;
     priv->params.pending_width = (window->width > 0 ? window->width : 1);
     priv->params.pending_height = (window->height > 0 ? window->height : 1);
-    priv->current.queue = wl_display_create_queue(inst->wdpy);
+    snprintf(queue_name, sizeof(queue_name), "EGLSurface(%p)", wsurf);
+    priv->current.queue = wl_display_create_queue_with_name(inst->wdpy, queue_name);
     if (priv->current.queue == NULL)
     {
         eplSetError(plat, EGL_BAD_ALLOC, "Failed to create internal event queue");

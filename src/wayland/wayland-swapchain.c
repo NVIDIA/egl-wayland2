@@ -92,6 +92,33 @@ static void on_buffer_release(void *userdata, struct wl_buffer *wbuf)
 }
 static const struct wl_buffer_listener BUFFER_LISTENER = { on_buffer_release };
 
+typedef struct
+{
+    struct wl_buffer *buffer;
+    EGLBoolean done;
+} DmaBufParamsCreateState;
+
+void on_dmabuf_params_created(void *userdata,
+        struct zwp_linux_buffer_params_v1 *params,
+        struct wl_buffer *buffer)
+{
+    DmaBufParamsCreateState *state = userdata;
+    state->buffer = buffer;
+    state->done = EGL_TRUE;
+}
+void on_dmabuf_params_failed(void *userdata,
+           struct zwp_linux_buffer_params_v1 *params)
+{
+    DmaBufParamsCreateState *state = userdata;
+    state->buffer = NULL;
+    state->done = EGL_TRUE;
+}
+static const struct zwp_linux_buffer_params_v1_listener DMABUF_PARAMS_LISTENER =
+{
+    on_dmabuf_params_created,
+    on_dmabuf_params_failed,
+};
+
 /**
  * Creates a wl_buffer from a dma-buf.
  */
@@ -99,9 +126,16 @@ static struct wl_buffer *ShareDmaBuf(WlDisplayInstance *inst,
         struct wl_event_queue *queue, int dmabuf, uint32_t width, uint32_t height,
         uint32_t stride, uint32_t offset, uint32_t fourcc, uint64_t modifier)
 {
+    DmaBufParamsCreateState state = {};
     struct zwp_linux_dmabuf_v1 *wrapper = NULL;
     struct zwp_linux_buffer_params_v1 *params = NULL;
-    struct wl_buffer *wbuf = NULL;
+    struct wl_event_queue *params_queue = NULL;
+
+    params_queue = wl_display_create_queue(inst->wdpy);
+    if (params_queue == NULL)
+    {
+        goto done;
+    }
 
     wrapper = wl_proxy_create_wrapper(inst->globals.dmabuf);
     if (wrapper == NULL)
@@ -109,25 +143,36 @@ static struct wl_buffer *ShareDmaBuf(WlDisplayInstance *inst,
         goto done;
     }
 
-    wl_proxy_set_queue((struct wl_proxy *) wrapper, queue);
+    wl_proxy_set_queue((struct wl_proxy *) wrapper, params_queue);
     params = zwp_linux_dmabuf_v1_create_params(wrapper);
     if (params == NULL)
     {
         goto done;
     }
+    zwp_linux_buffer_params_v1_add_listener(params, &DMABUF_PARAMS_LISTENER, &state);
 
     // Note that libwayland-client will duplicate the file descriptor, so we
     // don't need to duplicate it here.
     zwp_linux_buffer_params_v1_add(params, dmabuf, 0, (uint32_t) offset, (uint32_t) stride,
             (uint32_t) (modifier >> 32), (uint32_t) (modifier & 0xFFFFFFFF));
 
-    wbuf = zwp_linux_buffer_params_v1_create_immed(params, width, height, fourcc, 0);
-    if (wbuf == NULL)
+    zwp_linux_buffer_params_v1_create(params, width, height, fourcc, 0);
+
+    while (!state.done)
     {
-        goto done;
+        if (wl_display_roundtrip_queue(inst->wdpy, params_queue) < 0)
+        {
+            goto done;
+        }
     }
 
 done:
+    if (state.buffer != NULL)
+    {
+        // Set the wl_buffer to use the surface's queue. This should be safe,
+        // because the wl_buffer shouldn't have gotten any events yet.
+        wl_proxy_set_queue((struct wl_proxy *) state.buffer, queue);
+    }
     if (params != NULL)
     {
         zwp_linux_buffer_params_v1_destroy(params);
@@ -136,8 +181,12 @@ done:
     {
         wl_proxy_wrapper_destroy(wrapper);
     }
+    if (params_queue != NULL)
+    {
+        wl_event_queue_destroy(params_queue);
+    }
 
-    return wbuf;
+    return state.buffer;
 }
 
 /**

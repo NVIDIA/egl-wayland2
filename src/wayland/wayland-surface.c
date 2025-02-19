@@ -625,9 +625,244 @@ void eplWlDestroyWindow(EplDisplay *pdpy, EplSurface *psurf,
     psurf->priv = NULL;
 }
 
+static void on_frame_done(void *userdata, struct wl_callback *callback, uint32_t callback_data)
+{
+    EplSurface *psurf = userdata;
+
+    if (psurf->priv->current.frame_callback == callback)
+    {
+        wl_callback_destroy(psurf->priv->current.frame_callback);
+        psurf->priv->current.frame_callback = NULL;
+    }
+}
+static const struct wl_callback_listener FRAME_CALLBACK_LISTENER = { on_frame_done };
+
+/**
+ * Waits for any previous frames.
+ *
+ * This function ensures that the client doesn't run too far ahead of the
+ * compositor.
+ *
+ * Currently, this just uses a wl_surface::frame request.
+ */
+static EGLBoolean WaitForPreviousFrames(EplSurface *psurf)
+{
+    while (psurf->priv->current.frame_callback != NULL)
+    {
+        if (wl_display_dispatch_queue(psurf->priv->inst->wdpy, psurf->priv->current.queue) < 0)
+        {
+            eplSetError(psurf->priv->inst->platform, EGL_BAD_ALLOC,
+                    "Failed to dispatch Wayland events");
+            return EGL_FALSE;
+        }
+    }
+
+    return EGL_TRUE;
+}
+
+/**
+ * Sets up a fence for client -> server synchronization.
+ *
+ * If we've got explicit sync, then this function will attach a fence to the
+ * timeline object, but it will NOT send the set_acquire_point or
+ * set_release_point request. The current timeline point will be set to the
+ * acquire point.
+ */
+static EGLBoolean SyncRendering(EplSurface *psurf, WlPresentBuffer *present_buf)
+{
+    EGLSync sync = EGL_NO_SYNC;
+    int syncFd = -1;
+    EGLBoolean success = EGL_FALSE;
+
+    if (!psurf->priv->inst->supports_EGL_ANDROID_native_fence_sync)
+    {
+        // If we don't have EGL_ANDROID_native_fence_sync, then we can't do
+        // anything other than a glFinish here.
+        assert(psurf->priv->current.syncobj == NULL);
+        psurf->priv->inst->platform->priv->egl.Finish();
+        return EGL_TRUE;
+    }
+
+    sync = psurf->priv->inst->platform->priv->egl.CreateSync(psurf->priv->inst->internal_display->edpy,
+            EGL_SYNC_NATIVE_FENCE_ANDROID, NULL);
+    if (sync == EGL_NO_SYNC)
+    {
+        goto done;
+    }
+    psurf->priv->inst->platform->priv->egl.Flush();
+
+    syncFd = psurf->priv->inst->platform->priv->egl.DupNativeFenceFDANDROID(psurf->priv->inst->internal_display->edpy, sync);
+    if (syncFd < 0)
+    {
+        goto done;
+    }
+
+    if (psurf->priv->current.syncobj != NULL)
+    {
+        assert(present_buf->timeline.wtimeline != NULL);
+
+        /*
+         * We've got explicit sync available, so plug the syncfd into the next
+         * timeline point.
+         *
+         * We let the caller send the set_acquire/release_point requests,
+         * though. That makes it easier to ensure that the sync requests are
+         * always sent alongside attach and commit requests.
+         */
+        success = eplWlTimelineAttachSyncFD(psurf->priv->inst, &present_buf->timeline, syncFd);
+    }
+    else
+    {
+        // Attach an implicit sync fence if we can. If we can't, then fall back
+        // to a CPU wait.
+        if (present_buf->dmabuf < 0 || !psurf->priv->inst->supports_implicit_sync
+                || !eplWlImportDmaBufSyncFile(present_buf->dmabuf, syncFd))
+        {
+            psurf->priv->inst->platform->priv->egl.Finish();
+        }
+        success = EGL_TRUE;
+    }
+
+done:
+    if (sync != EGL_NO_SYNC)
+    {
+        psurf->priv->inst->platform->priv->egl.DestroySync(psurf->priv->inst->internal_display->edpy, sync);
+    }
+    if (syncFd >= 0)
+    {
+        close(syncFd);
+    }
+    return success;
+}
+
 EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
         EplSurface *psurf, const EGLint *rects, EGLint n_rects)
 {
-    // Not implemented yet.
-    return EGL_FALSE;
+    WlDisplayInstance *inst = pdpy->priv->inst;
+    WlPresentBuffer *present_buf = NULL;
+    WlSwapChain *new_swapchain = NULL;
+    EGLBoolean success = EGL_FALSE;
+
+    if (!WaitForPreviousFrames(psurf))
+    {
+        return EGL_FALSE;
+    }
+
+    pthread_mutex_lock(&psurf->priv->params.mutex);
+    if (psurf->priv->params.native_window == NULL)
+    {
+        pthread_mutex_unlock(&psurf->priv->params.mutex);
+        eplSetError(plat, EGL_BAD_NATIVE_WINDOW, "wl_egl_window has been destroyed");
+        return EGL_FALSE;
+    }
+
+    psurf->priv->params.skip_update_callback++;
+    pthread_mutex_unlock(&psurf->priv->params.mutex);
+
+    // If the window has been resized, then allocate a new swapchain. We'll
+    // switch to it after presenting.
+    if (!SwapChainRealloc(psurf, EGL_TRUE, &new_swapchain))
+    {
+        eplSetError(plat, EGL_BAD_ALLOC, "Failed to allocate resized buffers");
+        goto done;
+    }
+
+    // We don't support PRIME yet, so we can just present the current back buffer.
+    present_buf = psurf->priv->current.swapchain->current_back;
+
+    if (!SyncRendering(psurf, present_buf))
+    {
+        goto done;
+    }
+
+    if (rects != NULL && n_rects > 0
+            && wl_proxy_get_version((struct wl_proxy *) psurf->priv->wsurf) >= 3)
+    {
+        EGLint i;
+        for (i=0; i<n_rects; i++)
+        {
+            const EGLint *rect = rects + (i * 4);
+            wl_surface_damage_buffer(psurf->priv->wsurf,
+                    rect[0], rect[1], rect[2], rect[3]);
+        }
+    }
+    else
+    {
+        wl_surface_damage(psurf->priv->wsurf, 0, 0, INT_MAX, INT_MAX);
+    }
+
+    psurf->priv->current.frame_callback = wl_surface_frame(psurf->priv->wsurf);
+    if (psurf->priv->current.frame_callback != NULL)
+    {
+        wl_callback_add_listener(psurf->priv->current.frame_callback,
+                &FRAME_CALLBACK_LISTENER, psurf);
+    }
+
+    if (psurf->priv->current.syncobj != NULL)
+    {
+        assert(present_buf->timeline.wtimeline != NULL);
+
+        wp_linux_drm_syncobj_surface_v1_set_acquire_point(psurf->priv->current.syncobj,
+                present_buf->timeline.wtimeline,
+                (uint32_t) (present_buf->timeline.point >> 32),
+                (uint32_t) present_buf->timeline.point);
+
+        present_buf->timeline.point++;
+        wp_linux_drm_syncobj_surface_v1_set_release_point(psurf->priv->current.syncobj,
+                present_buf->timeline.wtimeline,
+                (uint32_t) (present_buf->timeline.point >> 32),
+                (uint32_t) present_buf->timeline.point);
+    }
+
+    wl_surface_attach(psurf->priv->wsurf, present_buf->wbuf, 0, 0);
+    wl_surface_commit(psurf->priv->wsurf);
+    wl_display_flush(psurf->priv->inst->wdpy);
+    present_buf->status = BUFFER_STATUS_IN_USE;
+
+    if (new_swapchain != NULL)
+    {
+        SetWindowSwapchain(psurf, new_swapchain);
+        new_swapchain = NULL;
+    }
+    else
+    {
+        // Find a free buffer to use as the new back buffer.
+        WlPresentBuffer *next_back = eplWlSwapChainFindFreePresentBuffer(inst,
+                psurf->priv->current.swapchain, psurf->priv->current.queue);
+        EGLAttrib buffers[] = { GL_BACK, 0, EGL_NONE };
+
+        if (next_back == NULL)
+        {
+            psurf->priv->current.force_realloc = EGL_TRUE;
+            goto done;
+        }
+
+        buffers[1] = (EGLAttrib) next_back->buffer;
+
+        if (!psurf->priv->inst->platform->priv->egl.PlatformSetColorBuffersNVX(
+                    psurf->priv->inst->internal_display->edpy,
+                    psurf->internal_surface, buffers))
+        {
+            // Note that this should nver fail. The surface is the same size,
+            // so the driver doesn't have to reallocate anything.
+            psurf->priv->current.force_realloc = EGL_TRUE;
+            goto done;
+        }
+
+        psurf->priv->current.swapchain->current_back = next_back;
+        psurf->priv->current.swapchain->render_buffer = next_back->buffer;
+    }
+
+    success = EGL_TRUE;
+
+done:
+    if (new_swapchain != NULL)
+    {
+        eplWlSwapChainDestroy(psurf->priv->inst, new_swapchain);
+    }
+    pthread_mutex_lock(&psurf->priv->params.mutex);
+    psurf->priv->params.skip_update_callback--;
+    pthread_mutex_unlock(&psurf->priv->params.mutex);
+
+    return success;
 }

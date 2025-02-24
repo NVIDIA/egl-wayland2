@@ -852,6 +852,20 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
         inst->force_prime = EGL_TRUE;
     }
 
+    // Assume that if the server is running on a non-NVIDIA device, then it
+    // supports implicit sync.
+    inst->supports_implicit_sync = (serverDevice == EGL_NO_DEVICE_EXT);
+    if (inst->supports_implicit_sync)
+    {
+        // Allow disabling implicit sync. This shouldn't be necessary in
+        // practice, but it can be useful for testing.
+        const char *env = getenv("__NV_DISABLE_IMPLICIT_SYNC");
+        if (env != NULL && atoi(env) != 0)
+        {
+            inst->supports_implicit_sync = EGL_FALSE;
+        }
+    }
+
     inst->gbmdev = gbm_create_device(drmFd);
     if (inst->gbmdev == NULL)
     {

@@ -43,6 +43,49 @@
 
 static const int WL_EGL_WINDOW_DESTROY_CALLBACK_SINCE = 3;
 
+/**
+ * Keeps track of a per-surface dma-buf feedback object.
+ *
+ * This is currently only used if we're rendering to the server's main device.
+ * If we're not using the main device, then we have to use the PRIME path
+ * anyway, which means the wl_buffers will always be linear.
+ */
+typedef struct
+{
+    WlDmaBufFeedbackCommon base;
+
+    EplSurface *psurf;
+
+    struct zwp_linux_dmabuf_feedback_v1 *feedback;
+
+    /**
+     * The set of modifiers that the server supports.
+     *
+     * This array is parallel to the driver format modifier list for the
+     * surface. A value of EGL_TRUE indicates that the corresponding modifier
+     * is supported.
+     *
+     * This is copied from \c tranche_modifiers_supported when we get a
+     * zwp_linux_dmabuf_feedback_v1::tranche_done event.
+     */
+    EGLBoolean *modifiers_supported;
+
+    /// True if the server supports a linear buffer.
+    EGLBoolean linear_supported;
+
+    /**
+     * The supported modifiers in the current tranche.
+     */
+    EGLBoolean *tranche_modifiers_supported;
+
+    EGLBoolean tranche_linear_supported;
+
+    /**
+     * True if we've received new feedback data.
+     */
+    EGLBoolean modifiers_changed;
+} SurfaceFeedbackState;
+
 struct _EplImplSurface
 {
     /// A pointer back to the owning display.
@@ -86,7 +129,15 @@ struct _EplImplSurface
         struct wl_callback *frame_callback;
 
         /**
+         * A dma-buf feedback object for this surface.
+         */
+        SurfaceFeedbackState *feedback;
+
+        /**
          * The set of modifiers that we should try to use for this surface.
+         *
+         * This is set based on either the default feedback or a per-surface
+         * zwp_linux_dmabuf_feedback_v1 object.
          *
          * If we're always using PRIME (i.e., we're rendering to a different
          * device than the server's main device), then this will be empty. In
@@ -193,6 +244,229 @@ static void PickDefaultModifiers(EplSurface *psurf)
 }
 
 /**
+ * Returns true if we've already found the next set of modifiers that we're
+ * going to use for buffer allocation, and so we should ignore any other
+ * tranches.
+ */
+static EGLBoolean SurfaceFeedbackHasModifiers(SurfaceFeedbackState *state)
+{
+    size_t i;
+
+    for (i=0; i<state->psurf->priv->driver_format->num_modifiers; i++)
+    {
+        if (state->modifiers_supported[i] || state->linear_supported)
+        {
+            return EGL_TRUE;
+        }
+    }
+    return EGL_FALSE;
+}
+
+static void OnSurfaceFeedbackTrancheFormats(void *userdata,
+            struct zwp_linux_dmabuf_feedback_v1 *wfeedback,
+            struct wl_array *indices)
+{
+    SurfaceFeedbackState *state = userdata;
+    EplSurface *psurf = state->psurf;
+    size_t i;
+    uint16_t *index;
+
+    if (state->base.error || state->base.format_table_len == 0 || SurfaceFeedbackHasModifiers(state))
+    {
+        return;
+    }
+
+    wl_array_for_each(index, indices)
+    {
+        if (*index >= state->base.format_table_len)
+        {
+            continue;
+        }
+        if (state->base.format_table[*index].fourcc != psurf->priv->driver_format->fourcc)
+        {
+            continue;
+        }
+        if (state->base.format_table[*index].modifier == DRM_FORMAT_MOD_LINEAR)
+        {
+            state->tranche_linear_supported = EGL_TRUE;
+        }
+        else
+        {
+            for (i=0; i<psurf->priv->driver_format->num_modifiers; i++)
+            {
+                if (psurf->priv->driver_format->modifiers[i] == state->base.format_table[*index].modifier)
+                {
+                    state->tranche_modifiers_supported[i] = EGL_TRUE;
+                    break;
+                }
+            }
+        }
+    }
+}
+
+static void OnSurfaceFeedbackTrancheDone(void *userdata,
+        struct zwp_linux_dmabuf_feedback_v1 *wfeedback)
+{
+    SurfaceFeedbackState *state = userdata;
+    EplSurface *psurf = state->psurf;
+    EGLBoolean use_tranche = EGL_FALSE;
+    size_t i;
+
+    if (!state->base.error && !SurfaceFeedbackHasModifiers(state))
+    {
+        for (i=0; i<psurf->priv->inst->render_device_id_count; i++)
+        {
+            if (state->base.tranche_target_device != psurf->priv->inst->render_device_id[i])
+            {
+                use_tranche = EGL_TRUE;
+                break;
+            }
+        }
+    }
+
+    if (use_tranche)
+    {
+        for (i=0; i<psurf->priv->driver_format->num_modifiers; i++)
+        {
+            state->modifiers_supported[i] = state->tranche_modifiers_supported[i];
+            state->tranche_modifiers_supported[i] = EGL_FALSE;
+        }
+        state->linear_supported = state->tranche_linear_supported;
+        state->tranche_linear_supported = EGL_FALSE;
+    }
+
+    eplWlDmaBufFeedbackCommonTrancheDone(&state->base);
+}
+
+static void OnSurfaceFeedbackDone(void *userdata,
+        struct zwp_linux_dmabuf_feedback_v1 *wfeedback)
+{
+    SurfaceFeedbackState *state = userdata;
+    EplSurface *psurf = state->psurf;
+    size_t i;
+
+    psurf->priv->current.num_surface_modifiers = 0;
+    for (i=0; i<psurf->priv->driver_format->num_modifiers; i++)
+    {
+        if (state->modifiers_supported[i])
+        {
+            psurf->priv->current.surface_modifiers[psurf->priv->current.num_surface_modifiers++]
+                = psurf->priv->driver_format->modifiers[i];
+        }
+
+        // Clear the modifier arrays to get ready for the next update.
+        state->modifiers_supported[i] = EGL_FALSE;
+        state->tranche_modifiers_supported[i] = EGL_FALSE;
+    }
+
+    if (psurf->priv->current.num_surface_modifiers == 0)
+    {
+        /*
+         * The server didn't advertise any modifiers that we support.
+         *
+         * We only use surface feedback if we're rendering on the server's main
+         * device, so if the server advertises linear, then that probably means
+         * the window is being displayed on another (non-main) device that can
+         * scan out from a linear buffer. In that case, we'll use PRIME.
+         *
+         * Otherwise, fall back to using the default feedback data so that we
+         * at least have something that the server can read.
+         */
+        if (!state->linear_supported)
+        {
+            PickDefaultModifiers(psurf);
+        }
+    }
+
+    state->linear_supported = EGL_FALSE;
+    state->tranche_linear_supported = EGL_FALSE;
+    state->modifiers_changed = EGL_TRUE;
+    eplWlDmaBufFeedbackCommonDone(&state->base);
+}
+
+static const struct zwp_linux_dmabuf_feedback_v1_listener SURFACE_FEEDBACK_LISTENER =
+{
+    OnSurfaceFeedbackDone,
+    eplWlDmaBufFeedbackCommonFormatTable,
+    eplWlDmaBufFeedbackCommonMainDevice,
+    OnSurfaceFeedbackTrancheDone,
+    eplWlDmaBufFeedbackCommonTrancheTargetDevice,
+    OnSurfaceFeedbackTrancheFormats,
+    eplWlDmaBufFeedbackCommonTrancheFlags,
+};
+
+static EGLBoolean CreateSurfaceFeedback(EplSurface *psurf)
+{
+    WlDisplayInstance *inst = psurf->priv->inst;
+    SurfaceFeedbackState *state;
+    struct zwp_linux_dmabuf_v1 *wrapper = NULL;
+
+    if (inst->force_prime || wl_proxy_get_version((struct wl_proxy *) inst->globals.dmabuf) < 4)
+    {
+        return EGL_TRUE;
+    }
+
+    state = calloc(1, sizeof(SurfaceFeedbackState)
+            + psurf->priv->driver_format->num_modifiers * (2 * sizeof(EGLBoolean)));
+    if (state == NULL)
+    {
+        eplSetError(inst->platform, EGL_BAD_ALLOC, "Out of memory");
+        return EGL_FALSE;
+    }
+
+    eplWlDmaBufFeedbackCommonInit(&state->base);
+    state->psurf = psurf;
+    state->modifiers_supported = (EGLBoolean *) (state + 1);
+    state->tranche_modifiers_supported = (EGLBoolean *)
+        (state->modifiers_supported + psurf->priv->driver_format->num_modifiers);
+    psurf->priv->current.feedback = state;
+
+    wrapper = wl_proxy_create_wrapper(inst->globals.dmabuf);
+    if (wrapper == NULL)
+    {
+        eplSetError(inst->platform, EGL_BAD_ALLOC, "Out of memory");
+        return EGL_FALSE;
+    }
+
+    wl_proxy_set_queue((struct wl_proxy *) wrapper, psurf->priv->current.queue);
+    state->feedback = zwp_linux_dmabuf_v1_get_surface_feedback(wrapper, psurf->priv->wsurf);
+    wl_proxy_wrapper_destroy(wrapper);
+
+    if (state->feedback == NULL)
+    {
+        eplSetError(inst->platform, EGL_BAD_ALLOC, "Out of memory");
+        return EGL_FALSE;
+    }
+
+    zwp_linux_dmabuf_feedback_v1_add_listener(state->feedback, &SURFACE_FEEDBACK_LISTENER, state);
+
+    // Do a single round trip. The server should send a full batch of feedback
+    // data, but if it doesn't, then the modifier list is already initialized
+    // using the default feedback.
+    if (wl_display_roundtrip_queue(inst->wdpy, psurf->priv->current.queue) < 0)
+    {
+        eplSetError(inst->platform, EGL_BAD_ALLOC, "Failed to read window system events");
+        return EGL_FALSE;
+    }
+
+    return EGL_TRUE;
+}
+
+static void DestroySurfaceFeedback(EplSurface *psurf)
+{
+    if (psurf->priv->current.feedback != NULL)
+    {
+        if (psurf->priv->current.feedback->feedback != NULL)
+        {
+            zwp_linux_dmabuf_feedback_v1_destroy(psurf->priv->current.feedback->feedback);
+        }
+        eplWlDmaBufFeedbackCommonCleanup(&psurf->priv->current.feedback->base);
+        free(psurf->priv->current.feedback);
+        psurf->priv->current.feedback = NULL;
+    }
+}
+
+/**
  * Checks if we need to allocate a new swapchain.
  *
  * If the current swapchain is not NULL, then this function will check to see
@@ -233,9 +507,33 @@ static EGLBoolean SwapChainRealloc(EplSurface *psurf,
     {
         needs_new = EGL_TRUE;
     }
-
-    // We don't have per-surface feedback yet, but when we do, this is where
-    // we'd check if we've got a new modifier list.
+    else if (allow_modifier_realloc
+            && psurf->priv->current.feedback != NULL
+            && psurf->priv->current.feedback->modifiers_changed)
+    {
+        if (psurf->priv->current.swapchain->prime)
+        {
+            if (psurf->priv->current.num_surface_modifiers > 0)
+            {
+                // Transition from prime to direct
+                needs_new = EGL_TRUE;
+            }
+        }
+        else
+        {
+            size_t i;
+            needs_new = EGL_TRUE;
+            for (i=0; i<psurf->priv->current.num_surface_modifiers; i++)
+            {
+                if (psurf->priv->current.swapchain->modifier == psurf->priv->current.surface_modifiers[i])
+                {
+                    // Transition from direct to either prime or direct with different modifiers
+                    needs_new = EGL_FALSE;
+                    break;
+                }
+            }
+        }
+    }
 
     if (needs_new)
     {
@@ -553,9 +851,10 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
     // Initialize the modifier list based on the default modifiers.
     PickDefaultModifiers(psurf);
 
-    // TODO: If we've got a new enough version of linux-dmabuf-v1, then set up
-    // a surface feedback object here and let that override the default
-    // modifiers.
+    if (!CreateSurfaceFeedback(psurf))
+    {
+        goto done;
+    }
 
     // Now that we've got our format modifier list, allocate the initial
     // swapchain.
@@ -641,6 +940,9 @@ void eplWlDestroyWindow(EplDisplay *pdpy, EplSurface *psurf,
     {
         eplWlSwapChainDestroy(psurf->priv->inst, psurf->priv->current.swapchain);
     }
+
+    DestroySurfaceFeedback(psurf);
+
     if (psurf->priv->current.syncobj != NULL)
     {
         wp_linux_drm_syncobj_surface_v1_destroy(psurf->priv->current.syncobj);

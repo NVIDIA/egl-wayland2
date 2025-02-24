@@ -102,6 +102,11 @@ typedef struct
      * True if we can use implicit sync.
      */
     EGLBoolean supports_implicit_sync;
+
+    /**
+     * True if we always to use PRIME.
+     */
+    EGLBoolean force_prime;
 } WlDisplayInstance;
 
 EPL_REFCOUNT_DECLARE_TYPE_FUNCS(WlDisplayInstance, eplWlDisplayInstance);

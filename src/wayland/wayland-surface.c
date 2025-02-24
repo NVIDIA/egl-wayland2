@@ -153,11 +153,21 @@ struct _EplImplSurface
 static void PickDefaultModifiers(EplSurface *psurf)
 {
     const WlDmaBufFormat *driver_format = psurf->priv->driver_format;
-    const WlDmaBufFormat *server_format = eplWlDmaBufFormatFind(psurf->priv->inst->default_feedback->formats,
-            psurf->priv->inst->default_feedback->num_formats, driver_format->fourcc);
+    const WlDmaBufFormat *server_format;
     size_t i;
 
     psurf->priv->current.num_surface_modifiers = 0;
+
+    if (psurf->priv->inst->force_prime)
+    {
+        // If we have to use PRIME, then leave the modifier list empty. The
+        // present buffers will all be linear, and the render buffer only has
+        // to match the driver, not the server's support.
+        return;
+    }
+
+    server_format = eplWlDmaBufFormatFind(psurf->priv->inst->default_feedback->formats,
+            psurf->priv->inst->default_feedback->num_formats, driver_format->fourcc);
 
     if (server_format == NULL)
     {
@@ -224,15 +234,24 @@ static EGLBoolean SwapChainRealloc(EplSurface *psurf,
         needs_new = EGL_TRUE;
     }
 
+    // We don't have per-surface feedback yet, but when we do, this is where
+    // we'd check if we've got a new modifier list.
+
     if (needs_new)
     {
-        // We don't support PRIME yet, so we should always have a set of
-        // possible modifiers.
-        assert(psurf->priv->current.num_surface_modifiers > 0);
-        swapchain = eplWlSwapChainCreate(psurf->priv->inst, psurf->priv->current.queue,
-                width, height, driver_format->fourcc, EGL_FALSE,
-                psurf->priv->current.surface_modifiers,
-                psurf->priv->current.num_surface_modifiers);
+        if (psurf->priv->current.num_surface_modifiers > 0)
+        {
+            swapchain = eplWlSwapChainCreate(psurf->priv->inst, psurf->priv->current.queue,
+                    width, height, driver_format->fourcc, EGL_FALSE,
+                    psurf->priv->current.surface_modifiers,
+                    psurf->priv->current.num_surface_modifiers);
+        }
+        else
+        {
+            swapchain = eplWlSwapChainCreate(psurf->priv->inst, psurf->priv->current.queue,
+                    width, height, driver_format->fourcc, EGL_TRUE,
+                    driver_format->modifiers, driver_format->num_modifiers);
+        }
         if (swapchain == NULL)
         {
             goto done;
@@ -784,8 +803,31 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
         goto done;
     }
 
-    // We don't support PRIME yet, so we can just present the current back buffer.
-    present_buf = psurf->priv->current.swapchain->current_back;
+    if (psurf->priv->current.swapchain->prime)
+    {
+        // For PRIME, we need to find a free present buffer up front so that we
+        // can blit to it.
+        present_buf = eplWlSwapChainFindFreePresentBuffer(inst,
+                psurf->priv->current.swapchain, psurf->priv->current.queue);
+        if (present_buf == NULL)
+        {
+            goto done;
+        }
+        if (!plat->priv->egl.PlatformCopyColorBufferNVX(inst->internal_display->edpy,
+                psurf->priv->current.swapchain->render_buffer,
+                present_buf->buffer))
+        {
+            eplSetError(plat, EGL_BAD_ALLOC, "Driver error: Failed to blit to shared wl_buffer");
+            goto done;
+        }
+    }
+    else
+    {
+        // For non-PRIME, we can present the current back buffer directly. We
+        // don't need a new back buffer until after presenting (which might
+        // free up an existing buffer).
+        present_buf = psurf->priv->current.swapchain->current_back;
+    }
 
     if (!SyncRendering(psurf, present_buf))
     {
@@ -841,9 +883,9 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
         SetWindowSwapchain(psurf, new_swapchain);
         new_swapchain = NULL;
     }
-    else
+    else if (!psurf->priv->current.swapchain->prime)
     {
-        // Find a free buffer to use as the new back buffer.
+        // For non-PRIME, find a free buffer to use as the new back buffer.
         WlPresentBuffer *next_back = eplWlSwapChainFindFreePresentBuffer(inst,
                 psurf->priv->current.swapchain, psurf->priv->current.queue);
         EGLAttrib buffers[] = { GL_BACK, 0, EGL_NONE };
@@ -869,6 +911,9 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
         psurf->priv->current.swapchain->current_back = next_back;
         psurf->priv->current.swapchain->render_buffer = next_back->buffer;
     }
+
+    // Note that for PRIME, since we don't have a front buffer at all, so we
+    // can just keep using the same back buffer.
 
     success = EGL_TRUE;
 

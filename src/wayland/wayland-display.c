@@ -797,12 +797,6 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
         }
     }
 
-    if (renderDevice != serverDevice)
-    {
-        // PRIME isn't implemented yet, so disable this case.
-        renderDevice = NULL;
-    }
-
     if (renderDevice == EGL_NO_DEVICE_EXT)
     {
         if (from_init)
@@ -814,6 +808,48 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
             eplSetError(pdpy->platform, EGL_BAD_MATCH, "GPU offloading from %p is not supported", pdpy->priv->device_attrib);
         }
         goto done;
+    }
+
+    if (renderDevice != serverDevice)
+    {
+        // If we're running on a different device than the server, then we need
+        // to open the correct device node for GBM.
+        ext = pdpy->platform->egl.QueryDeviceStringEXT(renderDevice, EGL_EXTENSIONS);
+
+        assert(supportsLinear);
+
+        close(drmFd);
+        drmFd = -1;
+
+        if (eplFindExtension("EGL_EXT_device_drm_render_node", ext))
+        {
+            const char *node = pdpy->platform->egl.QueryDeviceStringEXT(renderDevice, EGL_DRM_RENDER_NODE_FILE_EXT);
+            if (node != NULL)
+            {
+                drmFd = open(node, O_RDWR);
+            }
+        }
+
+        if (drmFd < 0)
+        {
+            const char *node = pdpy->platform->egl.QueryDeviceStringEXT(renderDevice, EGL_DRM_DEVICE_FILE_EXT);
+            if (node == NULL)
+            {
+                eplSetError(pdpy->platform, EGL_BAD_ACCESS, "Driver error: Can't find device node");
+                eplWlDisplayInstanceUnref(inst);
+                return NULL;
+            }
+
+            drmFd = open(node, O_RDWR);
+            if (drmFd < 0)
+            {
+                eplSetError(pdpy->platform, EGL_BAD_ACCESS, "Can't open device node %s: %s", node, strerror(errno));
+                eplWlDisplayInstanceUnref(inst);
+                return NULL;
+            }
+        }
+
+        inst->force_prime = EGL_TRUE;
     }
 
     inst->gbmdev = gbm_create_device(drmFd);
@@ -863,7 +899,7 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
     }
 
     inst->configs = eplWlInitConfigList(pdpy->platform, inst->internal_display->edpy,
-        inst->default_feedback, inst->driver_formats, EGL_FALSE, EGL_FALSE, from_init);
+        inst->default_feedback, inst->driver_formats, EGL_TRUE, inst->force_prime, from_init);
     if (inst->configs == NULL)
     {
         goto done;

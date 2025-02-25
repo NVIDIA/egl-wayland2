@@ -81,6 +81,12 @@ struct _EplImplPlatform
                           uint32_t flags);
     } drm;
 
+    struct
+    {
+        struct wl_event_queue * (* display_create_queue_with_name) (
+                struct wl_display *display, const char *name);
+    } wl;
+
     EGLBoolean timeline_funcs_supported;
 };
 

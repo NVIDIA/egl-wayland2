@@ -148,6 +148,10 @@ PUBLIC EGLBoolean loadEGLExternalPlatform(int major, int minor,
 
     plat->priv->drm.GetDeviceFromDevId = dlsym(RTLD_DEFAULT, "drmGetDeviceFromDevId");
 
+    // wl_display_create_queue_with_name was added in libwayland 1.22.91. Use
+    // it if it's available, but we don't otherwise need anything that recent.
+    plat->priv->wl.display_create_queue_with_name = dlsym(RTLD_DEFAULT, "wl_display_create_queue_with_name");
+
 #define LOAD_PROC(supported, prefix, group, name) \
     supported = supported && LoadProcHelper(plat, RTLD_DEFAULT, (void **) &plat->priv->group.name, prefix #name)
 

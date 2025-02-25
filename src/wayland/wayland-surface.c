@@ -738,7 +738,6 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
         EGLConfig config, void *native_surface, const EGLAttrib *attribs, EGLBoolean create_platform,
         const struct glvnd_list *existing_surfaces)
 {
-    char queue_name[64];
     const EplSurface *otherSurf = NULL;
     WlDisplayInstance *inst = pdpy->priv->inst;
     EplImplSurface *priv = NULL;
@@ -815,8 +814,17 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
     priv->current.surface_modifiers = (uint64_t *) (priv + 1);
     priv->inst = eplWlDisplayInstanceRef(inst);
 
-    snprintf(queue_name, sizeof(queue_name), "EGLSurface(%p)", wsurf);
-    priv->current.queue = wl_display_create_queue_with_name(inst->wdpy, queue_name);
+    if (plat->priv->wl.display_create_queue_with_name != NULL)
+    {
+        char name[64];
+        snprintf(name, sizeof(name), "EGLSurface(%u)", wl_proxy_get_id((struct wl_proxy *) wsurf));
+        priv->current.queue = plat->priv->wl.display_create_queue_with_name(inst->wdpy, name);
+    }
+    else
+    {
+        priv->current.queue = wl_display_create_queue(inst->wdpy);
+        abort();
+    }
     if (priv->current.queue == NULL)
     {
         eplSetError(plat, EGL_BAD_ALLOC, "Failed to create internal event queue");

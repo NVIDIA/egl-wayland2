@@ -153,13 +153,18 @@ typedef struct
      * For non-PRIME, this will be the same buffer as \c current_back.
      */
     EGLPlatformColorBufferNVX render_buffer;
+
+    /**
+     * An event queue used internally by the swap chain itself.
+     */
+    struct wl_event_queue *queue;
 } WlSwapChain;
 
 /**
  * Creates a swapchain, with an initial renderable buffer.
  *
  * \param inst The WlDisplayInstance for the display
- * \param queue The surface's event queue
+ * \param wsurf The wl_surface. This is only used to set an event queue name.
  * \param width The width of the surface
  * \param height The height of the surface
  * \param fourcc The fourcc format code
@@ -168,15 +173,14 @@ typedef struct
  * \param modifiers A list of allowed modifiers for the buffers.
  * \param num_modifiers The number of modifiers in \c modifiers.
  */
-WlSwapChain *eplWlSwapChainCreate(WlDisplayInstance *inst,
-        struct wl_event_queue *queue, uint32_t width, uint32_t height,
-        uint32_t fourcc, EGLBoolean prime,
+WlSwapChain *eplWlSwapChainCreate(WlDisplayInstance *inst, struct wl_surface *wsurf,
+        uint32_t width, uint32_t height, uint32_t fourcc, EGLBoolean prime,
         const uint64_t *modifiers, size_t num_modifiers);
 
 void eplWlSwapChainDestroy(WlDisplayInstance *inst, WlSwapChain *swapchain);
 
 WlPresentBuffer *eplWlSwapChainCreatePresentBuffer(WlDisplayInstance *inst,
-        WlSwapChain *swapchain, struct wl_event_queue *queue);
+        WlSwapChain *swapchain);
 
 /**
  * Returns a free present buffer.
@@ -185,6 +189,6 @@ WlPresentBuffer *eplWlSwapChainCreatePresentBuffer(WlDisplayInstance *inst,
  * wait for one to free up.
  */
 WlPresentBuffer *eplWlSwapChainFindFreePresentBuffer(WlDisplayInstance *inst,
-        WlSwapChain *swapchain, struct wl_event_queue *queue);
+        WlSwapChain *swapchain);
 
 #endif // WAYLAND_SWAPCHAIN_H

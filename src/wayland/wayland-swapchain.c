@@ -17,6 +17,7 @@
 
 #include "wayland-swapchain.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
@@ -129,13 +130,6 @@ static struct wl_buffer *ShareDmaBuf(WlDisplayInstance *inst,
     DmaBufParamsCreateState state = {};
     struct zwp_linux_dmabuf_v1 *wrapper = NULL;
     struct zwp_linux_buffer_params_v1 *params = NULL;
-    struct wl_event_queue *params_queue = NULL;
-
-    params_queue = wl_display_create_queue(inst->wdpy);
-    if (params_queue == NULL)
-    {
-        goto done;
-    }
 
     wrapper = wl_proxy_create_wrapper(inst->globals.dmabuf);
     if (wrapper == NULL)
@@ -143,7 +137,7 @@ static struct wl_buffer *ShareDmaBuf(WlDisplayInstance *inst,
         goto done;
     }
 
-    wl_proxy_set_queue((struct wl_proxy *) wrapper, params_queue);
+    wl_proxy_set_queue((struct wl_proxy *) wrapper, queue);
     params = zwp_linux_dmabuf_v1_create_params(wrapper);
     if (params == NULL)
     {
@@ -160,19 +154,13 @@ static struct wl_buffer *ShareDmaBuf(WlDisplayInstance *inst,
 
     while (!state.done)
     {
-        if (wl_display_roundtrip_queue(inst->wdpy, params_queue) < 0)
+        if (wl_display_roundtrip_queue(inst->wdpy, queue) < 0)
         {
             goto done;
         }
     }
 
 done:
-    if (state.buffer != NULL)
-    {
-        // Set the wl_buffer to use the surface's queue. This should be safe,
-        // because the wl_buffer shouldn't have gotten any events yet.
-        wl_proxy_set_queue((struct wl_proxy *) state.buffer, queue);
-    }
     if (params != NULL)
     {
         zwp_linux_buffer_params_v1_destroy(params);
@@ -180,10 +168,6 @@ done:
     if (wrapper != NULL)
     {
         wl_proxy_wrapper_destroy(wrapper);
-    }
-    if (params_queue != NULL)
-    {
-        wl_event_queue_destroy(params_queue);
     }
 
     return state.buffer;
@@ -197,7 +181,6 @@ done:
  *
  * \param inst The display instance
  * \param swapchain The swapchain to add the buffer to
- * \param queue The event queue to use for buffer events
  * \param dmabuf The dma-buf file descriptor
  * \param stride The stride value for the dma-buf
  * \param offset The offset value for the dma-buf
@@ -205,8 +188,7 @@ done:
  * \return A new WlPresentBuffer struct, or NULL on error.
  */
 static WlPresentBuffer *SwapChainAppendPresentBuffer(WlDisplayInstance *inst,
-        WlSwapChain *swapchain, struct wl_event_queue *queue, int dmabuf,
-        uint32_t stride, uint32_t offset)
+        WlSwapChain *swapchain, int dmabuf, uint32_t stride, uint32_t offset)
 {
     WlPresentBuffer *buf = calloc(1, sizeof(WlPresentBuffer));
 
@@ -229,7 +211,7 @@ static WlPresentBuffer *SwapChainAppendPresentBuffer(WlDisplayInstance *inst,
         }
     }
 
-    buf->wbuf = ShareDmaBuf(inst, queue, dmabuf, swapchain->width, swapchain->height,
+    buf->wbuf = ShareDmaBuf(inst, swapchain->queue, dmabuf, swapchain->width, swapchain->height,
             stride, offset, swapchain->fourcc, swapchain->modifier);
     if (buf->wbuf == NULL)
     {
@@ -264,7 +246,7 @@ static WlPresentBuffer *SwapChainAppendPresentBuffer(WlDisplayInstance *inst,
 }
 
 WlPresentBuffer *eplWlSwapChainCreatePresentBuffer(WlDisplayInstance *inst,
-        WlSwapChain *swapchain, struct wl_event_queue *queue)
+        WlSwapChain *swapchain)
 {
     EGLPlatformColorBufferNVX colorbuf = NULL;
     WlPresentBuffer *presentBuf = NULL;
@@ -288,7 +270,7 @@ WlPresentBuffer *eplWlSwapChainCreatePresentBuffer(WlDisplayInstance *inst,
         return NULL;
     }
 
-    presentBuf = SwapChainAppendPresentBuffer(inst, swapchain, queue, dmabuf, stride, offset);
+    presentBuf = SwapChainAppendPresentBuffer(inst, swapchain, dmabuf, stride, offset);
     if (presentBuf == NULL)
     {
         inst->platform->priv->egl.PlatformFreeColorBufferNVX(inst->internal_display->edpy, colorbuf);
@@ -316,6 +298,11 @@ void eplWlSwapChainDestroy(WlDisplayInstance *inst, WlSwapChain *swapchain)
             DestroyPresentBuffer(inst, buffer);
         }
 
+        if (swapchain->queue != NULL)
+        {
+            wl_event_queue_destroy(swapchain->queue);
+        }
+
         if (swapchain->render_buffer != NULL)
         {
             inst->platform->priv->egl.PlatformFreeColorBufferNVX(inst->internal_display->edpy,
@@ -326,9 +313,8 @@ void eplWlSwapChainDestroy(WlDisplayInstance *inst, WlSwapChain *swapchain)
     }
 }
 
-WlSwapChain *eplWlSwapChainCreate(WlDisplayInstance *inst,
-        struct wl_event_queue *queue, uint32_t width, uint32_t height,
-        uint32_t fourcc, EGLBoolean prime,
+WlSwapChain *eplWlSwapChainCreate(WlDisplayInstance *inst, struct wl_surface *wsurf,
+        uint32_t width, uint32_t height, uint32_t fourcc, EGLBoolean prime,
         const uint64_t *modifiers, size_t num_modifiers)
 {
     WlSwapChain *swapchain = NULL;
@@ -349,6 +335,20 @@ WlSwapChain *eplWlSwapChainCreate(WlDisplayInstance *inst,
     swapchain->fourcc = fourcc;
     swapchain->modifier = DRM_FORMAT_MOD_INVALID;
     swapchain->prime = prime;
+    if (inst->platform->priv->wl.display_create_queue_with_name != NULL)
+    {
+        char name[64];
+        snprintf(name, sizeof(name), "EGLSurface(%u/%p)", wl_proxy_get_id((struct wl_proxy *) wsurf), swapchain);
+        swapchain->queue = inst->platform->priv->wl.display_create_queue_with_name(inst->wdpy, name);
+    }
+    else
+    {
+        swapchain->queue = wl_display_create_queue(inst->wdpy);
+    }
+    if (swapchain->queue == NULL)
+    {
+        goto done;
+    }
 
     /*
      * Start by creating the render buffer. We'll do that using libgbm, so that
@@ -404,7 +404,7 @@ WlSwapChain *eplWlSwapChainCreate(WlDisplayInstance *inst,
         // For non-PRIME, the render buffer is also a present buffer, so set
         // that up now.
         swapchain->modifier = gbm_bo_get_modifier(gbo);
-        swapchain->current_back = SwapChainAppendPresentBuffer(inst, swapchain, queue,
+        swapchain->current_back = SwapChainAppendPresentBuffer(inst, swapchain,
                 dmabuf, gbm_bo_get_stride(gbo), gbm_bo_get_offset(gbo, 0));
         if (swapchain->current_back == NULL)
         {
@@ -623,8 +623,8 @@ static EGLBoolean WaitImplicitFence(WlDisplayInstance *inst, WlPresentBuffer *bu
  *
  * \return The number of buffers that were checked, or -1 on error.
  */
-static int CheckBufferReleaseImplicit(WlDisplayInstance *inst, WlSwapChain *swapchain,
-        struct wl_event_queue *queue, int timeout_ms)
+static int CheckBufferReleaseImplicit(WlDisplayInstance *inst,
+        WlSwapChain *swapchain, int timeout_ms)
 {
     WlPresentBuffer *buffer;
     WlPresentBuffer **buffers;
@@ -633,7 +633,7 @@ static int CheckBufferReleaseImplicit(WlDisplayInstance *inst, WlSwapChain *swap
     int i;
     int ret;
 
-    if (wl_display_dispatch_queue_pending(inst->wdpy, queue) < 0)
+    if (wl_display_dispatch_queue_pending(inst->wdpy, swapchain->queue) < 0)
     {
         return -1;
     }
@@ -719,7 +719,7 @@ static int CheckBufferReleaseImplicit(WlDisplayInstance *inst, WlSwapChain *swap
 }
 
 WlPresentBuffer *eplWlSwapChainFindFreePresentBuffer(WlDisplayInstance *inst,
-        WlSwapChain *swapchain, struct wl_event_queue *queue)
+        WlSwapChain *swapchain)
 {
     /*
      * First, poll to see if any buffers have already freed up. Do this up
@@ -734,7 +734,7 @@ WlPresentBuffer *eplWlSwapChainFindFreePresentBuffer(WlDisplayInstance *inst,
     }
     else
     {
-        if (CheckBufferReleaseImplicit(inst, swapchain, queue, 0) < 0)
+        if (CheckBufferReleaseImplicit(inst, swapchain, 0) < 0)
         {
             return NULL;
         }
@@ -757,8 +757,7 @@ WlPresentBuffer *eplWlSwapChainFindFreePresentBuffer(WlDisplayInstance *inst,
         {
             // We didn't find a free buffer, but we don't have our maximum
             // number of buffers yet, so allocate a new one.
-            return eplWlSwapChainCreatePresentBuffer(inst, swapchain,
-                    queue);
+            return eplWlSwapChainCreatePresentBuffer(inst, swapchain);
         }
 
         // Otherwise, we have to wait for a buffer to free up.
@@ -772,7 +771,7 @@ WlPresentBuffer *eplWlSwapChainFindFreePresentBuffer(WlDisplayInstance *inst,
         }
         else
         {
-            int numChecked = CheckBufferReleaseImplicit(inst, swapchain, queue, RELEASE_WAIT_TIMEOUT);
+            int numChecked = CheckBufferReleaseImplicit(inst, swapchain, RELEASE_WAIT_TIMEOUT);
 
             if (numChecked < 0)
             {
@@ -789,7 +788,7 @@ WlPresentBuffer *eplWlSwapChainFindFreePresentBuffer(WlDisplayInstance *inst,
                  * CheckBufferReleaseImplicit will find it on the next pass
                  * through this loop.
                  */
-                if (wl_display_dispatch_queue(inst->wdpy, queue) < 0)
+                if (wl_display_dispatch_queue(inst->wdpy, swapchain->queue) < 0)
                 {
                     return NULL;
                 }

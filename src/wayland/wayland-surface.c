@@ -539,14 +539,14 @@ static EGLBoolean SwapChainRealloc(EplSurface *psurf,
     {
         if (psurf->priv->current.num_surface_modifiers > 0)
         {
-            swapchain = eplWlSwapChainCreate(psurf->priv->inst, psurf->priv->current.queue,
+            swapchain = eplWlSwapChainCreate(psurf->priv->inst, psurf->priv->wsurf,
                     width, height, driver_format->fourcc, EGL_FALSE,
                     psurf->priv->current.surface_modifiers,
                     psurf->priv->current.num_surface_modifiers);
         }
         else
         {
-            swapchain = eplWlSwapChainCreate(psurf->priv->inst, psurf->priv->current.queue,
+            swapchain = eplWlSwapChainCreate(psurf->priv->inst, psurf->priv->wsurf,
                     width, height, driver_format->fourcc, EGL_TRUE,
                     driver_format->modifiers, driver_format->num_modifiers);
         }
@@ -1118,7 +1118,7 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
         // For PRIME, we need to find a free present buffer up front so that we
         // can blit to it.
         present_buf = eplWlSwapChainFindFreePresentBuffer(inst,
-                psurf->priv->current.swapchain, psurf->priv->current.queue);
+                psurf->priv->current.swapchain);
         if (present_buf == NULL)
         {
             goto done;
@@ -1197,7 +1197,7 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
     {
         // For non-PRIME, find a free buffer to use as the new back buffer.
         WlPresentBuffer *next_back = eplWlSwapChainFindFreePresentBuffer(inst,
-                psurf->priv->current.swapchain, psurf->priv->current.queue);
+                psurf->priv->current.swapchain);
         EGLAttrib buffers[] = { GL_BACK, 0, EGL_NONE };
 
         if (next_back == NULL)

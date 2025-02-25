@@ -61,7 +61,14 @@ done:
 EGLBoolean wlEglCheckInterfaceType(struct wl_object *obj, const char *ifname)
 {
     /* The first member of a wl_object is a pointer to its wl_interface, */
-    struct wl_interface *interface = *(void **)obj;
+    struct wl_interface *interface;
+
+    if (!wlEglMemoryIsReadable(obj, sizeof(void *)))
+    {
+        return EGL_FALSE;
+    }
+
+    interface = *(void **)obj;
 
     /* Check if the memory for the wl_interface struct, and the
      * interface name, are safe to read. */
@@ -96,18 +103,17 @@ EGLBoolean wlEglGetWindowVersionAndSurface(struct wl_egl_window *window,
      * with a wl_egl_window from an old implementation of libwayland-egl.so
      */
 
-    if (wlEglMemoryIsReadable((void *)window->version, sizeof (void *)))
+    if (wlEglCheckInterfaceType((struct wl_object *) window->version, "wl_surface"))
     {
         version = 0;
         surface = (struct wl_surface *) window->version;
     }
-    else
+    else if (wlEglCheckInterfaceType((struct wl_object *) window->surface, "wl_surface"))
     {
         version = window->version;
         surface = window->surface;
     }
-
-    if (!wlEglCheckInterfaceType((struct wl_object *)surface, "wl_surface"))
+    else
     {
         return EGL_FALSE;
     }

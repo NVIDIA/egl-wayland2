@@ -16,6 +16,7 @@
 dep_gbm = dependency('gbm')
 dep_wayland_client = dependency('wayland-client')
 dep_dl = meson.get_compiler('c').find_library('dl', required : false)
+dep_wayland_egl_backend = dependency('wayland-egl-backend', version : ['>=3'])
 
 wl_protos = dependency('wayland-protocols', version: '>= 1.34')
 wl_protos_dir = wl_protos.get_variable('pkgdatadir')
@@ -71,6 +72,7 @@ wayland_platform = shared_library('nvidia-egl-wayland2',
     dep_gbm,
     dep_wayland_client,
     dep_dl,
+    dep_wayland_egl_backend,
   ],
   link_with: [ platform_base ],
   version : meson.project_version(),

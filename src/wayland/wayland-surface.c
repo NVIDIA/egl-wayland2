@@ -40,6 +40,7 @@
 #include "wayland-display.h"
 #include "wayland-swapchain.h"
 #include "wayland-dmabuf.h"
+#include "wl-object-utils.h"
 
 static const int WL_EGL_WINDOW_DESTROY_CALLBACK_SINCE = 3;
 
@@ -563,99 +564,6 @@ done:
     return success;
 }
 
-static EGLBoolean IsMemoryReadable(const void *p, size_t len)
-{
-    int fds[2], result = -1;
-
-    /*
-     * If the address is below some small-ish value, then assume it's not
-     * readable. This is mainly useful as an early-out when we're trying to
-     * figure out if a wl_egl_window starts with a version number or a
-     * wl_surface.
-     */
-    if (((uintptr_t) p) < 256)
-    {
-        return EGL_FALSE;
-    }
-
-    if (pipe(fds) == -1) {
-        return EGL_FALSE;
-    }
-
-    if (fcntl(fds[1], F_SETFL, O_NONBLOCK) == -1) {
-        goto done;
-    }
-
-    /* write will fail with EFAULT if the provided buffer is outside
-     * our accessible address space. */
-    result = write(fds[1], p, len);
-    assert(result != -1 || errno == EFAULT);
-
-done:
-    close(fds[0]);
-    close(fds[1]);
-    return result != -1;
-}
-
-static EGLBoolean CheckInterfaceType(struct wl_object *obj, const char *ifname)
-{
-    /* The first member of a wl_object is a pointer to its wl_interface, */
-    struct wl_interface *interface = *(void **)obj;
-
-    /* Check if the memory for the wl_interface struct, and the
-     * interface name, are safe to read. */
-    int len = strlen(ifname);
-    if (!IsMemoryReadable(interface, sizeof (*interface))
-            || !IsMemoryReadable(interface->name, len + 1))
-    {
-        return EGL_FALSE;
-    }
-
-    return !strcmp(interface->name, ifname);
-}
-
-/**
- * Returns the version number and the wl_surface pointer from a wl_egl_window.
- */
-static EGLBoolean GetWlEglWindowVersionAndSurface(struct wl_egl_window *window,
-        long int *ret_version, struct wl_surface **ret_surface)
-{
-    long int version = 0;
-    struct wl_surface *surface = NULL;
-
-    if (window == NULL || !IsMemoryReadable(window, sizeof (*window)))
-    {
-        return EGL_FALSE;
-    }
-
-    /*
-     * Given that wl_egl_window wasn't always a versioned struct, and that
-     * 'window->version' replaced 'window->surface', we must check whether
-     * 'window->version' is actually a valid pointer. If it is, we are dealing
-     * with a wl_egl_window from an old implementation of libwayland-egl.so
-     */
-
-    if (IsMemoryReadable((void *)window->version, sizeof (void *)))
-    {
-        version = 0;
-        surface = (struct wl_surface *) window->version;
-    }
-    else
-    {
-        version = window->version;
-        surface = window->surface;
-    }
-
-    if (!CheckInterfaceType((struct wl_object *)surface, "wl_surface"))
-    {
-        return EGL_FALSE;
-    }
-
-    *ret_version = version;
-    *ret_surface = surface;
-    return EGL_TRUE;
-}
-
 static void NativeResizeCallback(struct wl_egl_window *native, void *param)
 {
     EplSurface *psurf = param;
@@ -755,7 +663,7 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
         EGL_NONE
     };
 
-    if (!GetWlEglWindowVersionAndSurface(window, &windowVersion, &wsurf))
+    if (!wlEglGetWindowVersionAndSurface(window, &windowVersion, &wsurf))
     {
         eplSetError(plat, EGL_BAD_NATIVE_WINDOW, "wl_egl_window %p is invalid", window);
         return EGL_NO_SURFACE;

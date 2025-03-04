@@ -480,7 +480,7 @@ static EGLBoolean GetDefaultFeedbackV3(DefaultFeedbackState *state,
     // pointer so that we ignore them.
     wl_proxy_set_user_data((struct wl_proxy *) wdmabuf, NULL);
 
-    return EGL_FALSE;
+    return EGL_TRUE;
 }
 
 WlFormatList *eplWlDmaBufFeedbackGetDefault(struct wl_display *wdpy,

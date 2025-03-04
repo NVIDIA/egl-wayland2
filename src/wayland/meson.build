@@ -18,11 +18,14 @@ dep_wayland_client = dependency('wayland-client')
 dep_dl = meson.get_compiler('c').find_library('dl', required : false)
 dep_wayland_egl_backend = dependency('wayland-egl-backend', version : ['>=3'])
 
-wl_protos = dependency('wayland-protocols', version: '>= 1.34')
+wl_protos = dependency('wayland-protocols', version: '>= 1.38')
 wl_protos_dir = wl_protos.get_variable('pkgdatadir')
 wl_drm_xml = 'wayland-drm.xml'
 wl_dmabuf_xml = join_paths(wl_protos_dir, 'unstable', 'linux-dmabuf', 'linux-dmabuf-unstable-v1.xml')
 wl_drm_syncobj_xml = join_paths(wl_protos_dir, 'staging', 'linux-drm-syncobj', 'linux-drm-syncobj-v1.xml')
+wp_presentation_xml = join_paths(wl_protos_dir, 'stable', 'presentation-time', 'presentation-time.xml')
+wp_fifo_xml = join_paths(wl_protos_dir, 'staging', 'fifo', 'fifo-v1.xml')
+wp_commit_timing_xml = join_paths(wl_protos_dir, 'staging', 'commit-timing', 'commit-timing-v1.xml')
 
 wl_scanner = dependency('wayland-scanner', native: true)
 prog_scanner = find_program(wl_scanner.get_variable('wayland_scanner'))
@@ -50,6 +53,15 @@ generated_files = [
 
   client_header.process(wl_drm_syncobj_xml),
   code.process(wl_drm_syncobj_xml),
+
+  client_header.process(wp_presentation_xml),
+  code.process(wp_presentation_xml),
+
+  client_header.process(wp_fifo_xml),
+  code.process(wp_fifo_xml),
+
+  client_header.process(wp_commit_timing_xml),
+  code.process(wp_commit_timing_xml),
 ]
 
 wayland_platform = shared_library('nvidia-egl-wayland2',

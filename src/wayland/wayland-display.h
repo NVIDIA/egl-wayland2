@@ -25,6 +25,9 @@
 #include <gbm.h>
 
 #include "linux-drm-syncobj-v1-client-protocol.h"
+#include "presentation-time-client-protocol.h"
+#include "commit-timing-v1-client-protocol.h"
+#include "fifo-v1-client-protocol.h"
 
 /**
  * Contains data for an initialized EGLDisplay.
@@ -65,6 +68,9 @@ typedef struct
     {
         struct zwp_linux_dmabuf_v1 *dmabuf;
         struct wp_linux_drm_syncobj_manager_v1 *syncobj;
+        struct wp_presentation *presentation_time;
+        struct wp_fifo_manager_v1 *fifo;
+        struct wp_commit_timing_manager_v1 *commit_timing;
     } globals;
 
     /**
@@ -92,6 +98,11 @@ typedef struct
      */
     dev_t render_device_id[2];
     size_t render_device_id_count;
+
+    /**
+     * The clock ID for the wp_presentation protocol.
+     */
+    uint32_t presentation_time_clock_id;
 
     /**
      * True if the driver supports the EGL_ANDROID_native_fence_sync extension.

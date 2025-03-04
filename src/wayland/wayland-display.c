@@ -35,6 +35,9 @@
 static const uint32_t PROTO_DMABUF_VERSION[2] = { 3, 4 };
 static const uint32_t PROTO_SYNC_OBJ_VERSION[2] = { 1, 1 };
 static const uint32_t PROTO_DRM_VERSION[2] = { 1, 1 };
+static const uint32_t PROTO_PRESENTATION_TIME_VERSION[2] = { 1, 2 };
+static const uint32_t PROTO_FIFO_VERSION[2] = { 1, 1 };
+static const uint32_t PROTO_COMMIT_TIMING_VERSION[2] = { 1, 1 };
 
 typedef struct
 {
@@ -58,6 +61,9 @@ typedef struct
     ProtocolVersionOverride *version_overrides;
     WlDisplayGlobalName zwp_linux_dmabuf_v1;
     WlDisplayGlobalName wp_linux_drm_syncobj_manager_v1;
+    WlDisplayGlobalName wp_presentation;
+    WlDisplayGlobalName wp_fifo_manager_v1;
+    WlDisplayGlobalName wp_commit_timing_manager_v1;
     WlDisplayGlobalName wl_drm;
 } WlDisplayRegistry;
 
@@ -381,6 +387,9 @@ static void onRegistryGlobal(void *userdata, struct wl_registry *wl_registry,
     CHECK_INTERFACE(zwp_linux_dmabuf_v1, PROTO_DMABUF_VERSION);
     CHECK_INTERFACE(wp_linux_drm_syncobj_manager_v1, PROTO_SYNC_OBJ_VERSION);
     CHECK_INTERFACE(wl_drm, PROTO_DRM_VERSION);
+    CHECK_INTERFACE(wp_presentation, PROTO_PRESENTATION_TIME_VERSION);
+    CHECK_INTERFACE(wp_fifo_manager_v1, PROTO_FIFO_VERSION);
+    CHECK_INTERFACE(wp_commit_timing_manager_v1, PROTO_COMMIT_TIMING_VERSION);
 #undef CHECK_INTERFACE
 }
 static void OnRegistryGlobalRemove(void *data, struct wl_registry *wl_registry, uint32_t name)
@@ -753,6 +762,17 @@ static EGLBoolean CheckExplicitSyncSupport(EplPlatformData *plat, int drmfd)
     return EGL_TRUE;
 }
 
+static void on_wp_presentation_clock_id(void *userdata,
+        struct wp_presentation *wpp, uint32_t clk_id)
+{
+    if (userdata != NULL)
+    {
+        uint32_t *ptr = userdata;
+        *ptr = clk_id;
+    }
+}
+static struct wp_presentation_listener PRESENTATION_TIME_LISTENER = { on_wp_presentation_clock_id };
+
 WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_init)
 {
     WlDisplayInstance *inst = NULL;
@@ -1018,6 +1038,43 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
                 &wp_linux_drm_syncobj_manager_v1_interface,
                 names.wp_linux_drm_syncobj_manager_v1.version,
                 NULL);
+    }
+
+    if (names.wp_presentation.name != 0
+            && names.wp_fifo_manager_v1.name != 0
+            && names.wp_commit_timing_manager_v1.name != 0)
+    {
+        inst->globals.presentation_time = BindGlobalObject(names.registry,
+                names.wp_presentation.name, &wp_presentation_interface,
+                names.wp_presentation.version, queue);
+        if (inst->globals.presentation_time == NULL)
+        {
+            goto done;
+        }
+        wp_presentation_add_listener(inst->globals.presentation_time,
+                &PRESENTATION_TIME_LISTENER,
+                &inst->presentation_time_clock_id);
+        wl_display_roundtrip_queue(inst->wdpy, queue);
+        // Now that we've got the clock ID, detach it from the event queue
+        // so that we can destroy the queue later.
+        wl_proxy_set_user_data((struct wl_proxy *) inst->globals.presentation_time, NULL);
+        wl_proxy_set_queue((struct wl_proxy *) inst->globals.presentation_time, NULL);
+
+        inst->globals.fifo = BindGlobalObject(names.registry,
+                names.wp_fifo_manager_v1.name, &wp_fifo_manager_v1_interface,
+                names.wp_fifo_manager_v1.version, NULL);
+        if (inst->globals.fifo == NULL)
+        {
+            goto done;
+        }
+
+        inst->globals.commit_timing = BindGlobalObject(names.registry,
+                names.wp_commit_timing_manager_v1.name, &wp_commit_timing_manager_v1_interface,
+                names.wp_commit_timing_manager_v1.version, NULL);
+        if (inst->globals.commit_timing == NULL)
+        {
+            goto done;
+        }
     }
 
     inst->driver_formats = eplWlGetDriverFormats(pdpy->platform, inst->internal_display->edpy);

@@ -267,13 +267,12 @@ static void onRegistryGlobal(void *userdata, struct wl_registry *wl_registry,
 {
     WlDisplayRegistry *names = userdata;
 
-    if (CheckRegistryGlobal(&names->zwp_linux_dmabuf_v1, "zwp_linux_dmabuf_v1",
-                PROTO_DMABUF_VERSION, name, interface, version)) { }
-    else if (CheckRegistryGlobal(&names->wp_linux_drm_syncobj_manager_v1,
-                "wp_linux_drm_syncobj_manager_v1",
-                PROTO_SYNC_OBJ_VERSION, name, interface, version)) { }
-    else if (CheckRegistryGlobal(&names->wl_drm, "wl_drm",
-                PROTO_DRM_VERSION, name, interface, version)) { }
+#define CHECK_INTERFACE(iface, ver_pair) \
+        if (CheckRegistryGlobal(&names->iface, #iface, ver_pair, name, interface, version)) return
+    CHECK_INTERFACE(zwp_linux_dmabuf_v1, PROTO_DMABUF_VERSION);
+    CHECK_INTERFACE(wp_linux_drm_syncobj_manager_v1, PROTO_SYNC_OBJ_VERSION);
+    CHECK_INTERFACE(wl_drm, PROTO_DRM_VERSION);
+#undef CHECK_INTERFACE
 }
 static void OnRegistryGlobalRemove(void *data, struct wl_registry *wl_registry, uint32_t name)
 {

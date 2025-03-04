@@ -678,7 +678,8 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
      */
     glvnd_list_for_each_entry(otherSurf, existing_surfaces, entry)
     {
-        if (otherSurf->type == EPL_SURFACE_TYPE_WINDOW && otherSurf->priv != NULL && otherSurf->priv->wsurf == wsurf)
+        if (otherSurf->type == EPL_SURFACE_TYPE_WINDOW && otherSurf->priv != NULL
+                && wl_proxy_get_id((struct wl_proxy *) otherSurf->priv->wsurf) == wl_proxy_get_id((struct wl_proxy *) wsurf))
         {
             eplSetError(pdpy->platform, EGL_BAD_ALLOC,
                     "An EGLSurface already exists for wl_surface %p\n", wsurf);

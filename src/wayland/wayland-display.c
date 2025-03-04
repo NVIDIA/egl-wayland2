@@ -42,6 +42,12 @@ typedef struct
     uint32_t version;
 } WlDisplayGlobalName;
 
+typedef struct
+{
+    const char *name;
+    uint32_t version;
+} ProtocolVersionOverride;
+
 /**
  * Holds the object names and versions for the global Wayland protocol objects
  * that we care about.
@@ -49,6 +55,7 @@ typedef struct
 typedef struct
 {
     struct wl_registry *registry;
+    ProtocolVersionOverride *version_overrides;
     WlDisplayGlobalName zwp_linux_dmabuf_v1;
     WlDisplayGlobalName wp_linux_drm_syncobj_manager_v1;
     WlDisplayGlobalName wl_drm;
@@ -262,10 +269,112 @@ static EGLBoolean CheckRegistryGlobal(WlDisplayGlobalName *obj,
     }
 }
 
+static int FindNextStringToken(const char **tok, size_t *len, const char *sep)
+{
+    // Skip to the end of the current name.
+    const char *ptr = *tok + *len;
+
+    // Skip any leading separators.
+    while (*ptr != '\x00' && strchr(sep, *ptr) != NULL)
+    {
+        ptr++;
+    }
+
+    // Find the length of the current token.
+    *len = 0;
+    while (ptr[*len] != '\x00' && strchr(sep, ptr[*len]) == NULL)
+    {
+        (*len)++;
+    }
+    *tok = ptr;
+    return (*len > 0 ? 1 : 0);
+}
+
+static ProtocolVersionOverride *ParseProtocolOverrideString(const char *str)
+{
+    ProtocolVersionOverride *ret = NULL;
+    char *strbuf;
+    const char *tok = str;
+    size_t len = 0;
+    size_t num_tokens = 0;
+    size_t total_len = 0;
+
+    if (str == NULL)
+    {
+        return NULL;
+    }
+
+    while (FindNextStringToken(&tok, &len, ","))
+    {
+        num_tokens++;
+        total_len += len + 1;
+    }
+
+    if (num_tokens == 0)
+    {
+        return NULL;
+    }
+
+    ret = malloc((num_tokens + 1) * sizeof(ProtocolVersionOverride) + total_len);
+    if (ret == NULL)
+    {
+        return NULL;
+    }
+
+    strbuf = (char *) (ret + num_tokens + 1);
+
+    tok = str;
+    len = 0;
+    num_tokens = 0;
+    while (FindNextStringToken(&tok, &len, ","))
+    {
+        const char *sep = strchr(tok, '=');
+        if (sep != NULL)
+        {
+            size_t namelen = (sep - tok);
+            memcpy(strbuf, tok, namelen);
+            strbuf[namelen] = '\x00';
+
+            ret[num_tokens].name = strbuf;
+            ret[num_tokens].version = atoi(sep + 1);
+
+            num_tokens++;
+            strbuf += namelen + 1;
+        }
+    }
+    if (num_tokens == 0)
+    {
+        free(ret);
+        return NULL;
+    }
+
+    ret[num_tokens].name = NULL;
+    return ret;
+}
+
 static void onRegistryGlobal(void *userdata, struct wl_registry *wl_registry,
         uint32_t name, const char *interface, uint32_t version)
 {
     WlDisplayRegistry *names = userdata;
+
+    if (names->version_overrides != NULL)
+    {
+        int i;
+        for (i=0; names->version_overrides[i].name != NULL; i++)
+        {
+            if (strcmp(names->version_overrides[i].name, interface) == 0)
+            {
+                if (names->version_overrides[i].version <= 0)
+                {
+                    return;
+                }
+                else if (names->version_overrides[i].version < version)
+                {
+                    version = names->version_overrides[i].version;
+                }
+            }
+        }
+    }
 
 #define CHECK_INTERFACE(iface, ver_pair) \
         if (CheckRegistryGlobal(&names->iface, #iface, ver_pair, name, interface, version)) return
@@ -310,6 +419,7 @@ static EGLBoolean GetDisplayRegistry(struct wl_display *wdpy,
 
     wl_proxy_set_queue((struct wl_proxy *) wrapper, queue);
 
+    names->version_overrides = ParseProtocolOverrideString(getenv("__NV_WAYLAND_PROTOCOL_VERSIONS"));
     names->registry = wl_display_get_registry(wrapper);
     if (names->registry == NULL)
     {
@@ -336,6 +446,11 @@ done:
     if (!success)
     {
         FreeDisplayRegistry(names);
+    }
+    if (names->version_overrides != NULL)
+    {
+        free(names->version_overrides);
+        names->version_overrides = NULL;
     }
     return success;
 }

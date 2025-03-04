@@ -45,6 +45,11 @@
 static const int WL_EGL_WINDOW_DESTROY_CALLBACK_SINCE = 3;
 
 /**
+ * How much time to use for padding in wp_commit_timer_v1::set_timestamp.
+ */
+static const uint32_t FRAME_TIMESTAMP_PADDING = 500000; // 5 ms
+
+/**
  * Keeps track of a per-surface dma-buf feedback object.
  *
  * This is currently only used if we're rendering to the server's main device.
@@ -128,6 +133,31 @@ struct _EplImplSurface
          * A callback for a pending wl_frame event.
          */
         struct wl_callback *frame_callback;
+
+        /**
+         * A presentation feedback object for the last presented frame.
+         */
+        struct wp_presentation_feedback *presentation_feedback;
+
+        struct wp_fifo_v1 *fifo;
+        struct wp_commit_timer_v1 *commit_timer;
+
+        /**
+         * The timestamp of the last wp_presentation_feedback::presented or
+         * discarded event.
+         *
+         * This is used to set a commit time with wp_commit_timer_v1.
+         */
+        uint64_t last_present_timestamp;
+
+        /**
+         * The refresh rate reported in the last wp_presentation_feedback::presented
+         * event.
+         *
+         * If we haven't received any presented events, then we'll use a
+         * default value of 60 Hz.
+         */
+        uint32_t last_present_refresh;
 
         /**
          * A dma-buf feedback object for this surface.
@@ -721,6 +751,10 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
 
     psurf->priv = priv;
     priv->current.surface_modifiers = (uint64_t *) (priv + 1);
+
+    // Until we get a wp_presentation_feedback::presented event, start by
+    // assuming a refresh rate of 60 Hz.
+    priv->current.last_present_refresh = (1000000000 / 60);
     priv->inst = eplWlDisplayInstanceRef(inst);
 
     if (plat->priv->wl.display_create_queue_with_name != NULL)
@@ -762,6 +796,24 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
         if (priv->current.syncobj == NULL)
         {
             goto done;
+        }
+    }
+
+    if (inst->globals.fifo != NULL && inst->globals.presentation_time != NULL)
+    {
+        priv->current.fifo = wp_fifo_manager_v1_get_fifo(inst->globals.fifo, wsurf);
+        if (priv->current.fifo == NULL)
+        {
+            goto done;
+        }
+
+        if (inst->globals.commit_timing != NULL)
+        {
+            priv->current.commit_timer = wp_commit_timing_manager_v1_get_timer(inst->globals.commit_timing, wsurf);
+            if (priv->current.commit_timer == NULL)
+            {
+                goto done;
+            }
         }
     }
 
@@ -868,6 +920,18 @@ void eplWlDestroyWindow(EplDisplay *pdpy, EplSurface *psurf,
     {
         wl_callback_destroy(psurf->priv->current.frame_callback);
     }
+    if (psurf->priv->current.presentation_feedback != NULL)
+    {
+        wp_presentation_feedback_destroy(psurf->priv->current.presentation_feedback);
+    }
+    if (psurf->priv->current.fifo != NULL)
+    {
+        wp_fifo_v1_destroy(psurf->priv->current.fifo);
+    }
+    if (psurf->priv->current.commit_timer != NULL)
+    {
+        wp_commit_timer_v1_destroy(psurf->priv->current.commit_timer);
+    }
     if (psurf->priv->current.queue != NULL)
     {
         wl_event_queue_destroy(psurf->priv->current.queue);
@@ -892,17 +956,59 @@ static void on_frame_done(void *userdata, struct wl_callback *callback, uint32_t
 }
 static const struct wl_callback_listener FRAME_CALLBACK_LISTENER = { on_frame_done };
 
+static void on_wp_presentation_feedback_sync_output(void *userdata,
+        struct wp_presentation_feedback *wfeedback, struct wl_output *output)
+{
+}
+static void common_wp_presentation_feedback_done(EplSurface *psurf,
+        struct wp_presentation_feedback *wfeedback)
+{
+    if (psurf->priv->current.presentation_feedback == wfeedback)
+    {
+        wp_presentation_feedback_destroy(psurf->priv->current.presentation_feedback);
+        psurf->priv->current.presentation_feedback = NULL;
+    }
+}
+static void on_wp_presentation_feedback_discarded(void *userdata,
+        struct wp_presentation_feedback *wfeedback)
+{
+    EplSurface *psurf = userdata;
+    struct timespec ts;
+
+    if (clock_gettime(psurf->priv->inst->presentation_time_clock_id, &ts) == 0)
+    {
+        psurf->priv->current.last_present_timestamp = ((uint64_t) ts.tv_sec) * 1000000000 + ts.tv_nsec;
+    }
+    common_wp_presentation_feedback_done(psurf, wfeedback);
+}
+static void on_wp_presentation_feedback_presented(void *userdata,
+        struct wp_presentation_feedback *wfeedback,
+        uint32_t tv_sec_hi, uint32_t tv_sec_lo, uint32_t tv_nsec,
+        uint32_t refresh, uint32_t seq_hi, uint32_t seq_lo, uint32_t flags)
+{
+    EplSurface *psurf = userdata;
+
+    psurf->priv->current.last_present_timestamp = (((uint64_t) tv_sec_hi) << 32 | tv_sec_lo) + tv_nsec;
+    psurf->priv->current.last_present_refresh = refresh;
+    common_wp_presentation_feedback_done(psurf, wfeedback);
+}
+static const struct wp_presentation_feedback_listener PRESENTATION_FEEDBACK_LISTENER =
+{
+    on_wp_presentation_feedback_sync_output,
+    on_wp_presentation_feedback_presented,
+    on_wp_presentation_feedback_discarded,
+};
+
 /**
  * Waits for any previous frames.
  *
  * This function ensures that the client doesn't run too far ahead of the
  * compositor.
- *
- * Currently, this just uses a wl_surface::frame request.
  */
 static EGLBoolean WaitForPreviousFrames(EplSurface *psurf)
 {
-    while (psurf->priv->current.frame_callback != NULL)
+    while (psurf->priv->current.frame_callback != NULL
+            || psurf->priv->current.presentation_feedback != NULL)
     {
         if (wl_display_dispatch_queue(psurf->priv->inst->wdpy, psurf->priv->current.queue) < 0)
         {
@@ -997,6 +1103,8 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
     WlPresentBuffer *present_buf = NULL;
     WlSwapChain *new_swapchain = NULL;
     EGLBoolean success = EGL_FALSE;
+    EGLint swap_interval;
+    struct wp_presentation *presentation_time = NULL;
 
     if (!WaitForPreviousFrames(psurf))
     {
@@ -1011,8 +1119,20 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
         return EGL_FALSE;
     }
 
+    swap_interval = psurf->priv->params.swap_interval;
     psurf->priv->params.skip_update_callback++;
     pthread_mutex_unlock(&psurf->priv->params.mutex);
+
+    if (swap_interval > 0 && inst->globals.presentation_time != NULL)
+    {
+        presentation_time = wl_proxy_create_wrapper(inst->globals.presentation_time);
+        if (presentation_time == NULL)
+        {
+            eplSetError(plat, EGL_BAD_ALLOC, "Failed to create wp_presentation wrapper");
+            goto done;
+        }
+        wl_proxy_set_queue((struct wl_proxy *) presentation_time, psurf->priv->current.queue);
+    }
 
     // If the window has been resized, then allocate a new swapchain. We'll
     // switch to it after presenting.
@@ -1069,13 +1189,6 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
         wl_surface_damage(psurf->priv->wsurf, 0, 0, INT_MAX, INT_MAX);
     }
 
-    psurf->priv->current.frame_callback = wl_surface_frame(psurf->priv->wsurf);
-    if (psurf->priv->current.frame_callback != NULL)
-    {
-        wl_callback_add_listener(psurf->priv->current.frame_callback,
-                &FRAME_CALLBACK_LISTENER, psurf);
-    }
-
     if (psurf->priv->current.syncobj != NULL)
     {
         assert(present_buf->timeline.wtimeline != NULL);
@@ -1093,6 +1206,71 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
     }
 
     wl_surface_attach(psurf->priv->wsurf, present_buf->wbuf, 0, 0);
+
+    if (swap_interval > 0)
+    {
+        if (presentation_time != NULL && psurf->priv->current.fifo != NULL)
+        {
+            assert(psurf->priv->current.presentation_feedback == NULL);
+
+            psurf->priv->current.presentation_feedback = wp_presentation_feedback(presentation_time, psurf->priv->wsurf);
+            if (psurf->priv->current.presentation_feedback != NULL)
+            {
+                wp_presentation_feedback_add_listener(psurf->priv->current.presentation_feedback,
+                        &PRESENTATION_FEEDBACK_LISTENER, psurf);
+            }
+
+            if (psurf->priv->current.commit_timer != NULL
+                    && psurf->priv->current.last_present_timestamp != 0)
+            {
+                uint64_t timestamp = ((uint64_t) swap_interval) * psurf->priv->current.last_present_refresh;
+                if (timestamp >= FRAME_TIMESTAMP_PADDING)
+                {
+                    timestamp += psurf->priv->current.last_present_timestamp - FRAME_TIMESTAMP_PADDING;
+                    uint64_t sec = timestamp / 1000000000;
+                    uint32_t nsec = timestamp % 1000000000;
+                    wp_commit_timer_v1_set_timestamp(psurf->priv->current.commit_timer,
+                            (uint32_t) (sec >> 32), (uint32_t) sec, nsec);
+                }
+            }
+
+            wp_fifo_v1_set_barrier(psurf->priv->current.fifo);
+            wp_fifo_v1_wait_barrier(psurf->priv->current.fifo);
+
+            /*
+             * If the window is not visible (occluded, monitor on standby,
+             * etc), then we could be waiting for an indefinite amount of time
+             * for the compositor to send a wp_presentation_feedback::presented
+             * or discarded event.
+             *
+             * But, wp_fifo_v1 is required to unblock in finite time, so we can
+             * send an extra dummy commit with a wp_fifo_v1::wait_barrier.
+             *
+             * If the window is visible, then the compositor will send a
+             * presented event as normal, and if the window is not visible,
+             * then the second commit will trigger a discarded event.
+             *
+             * Note that the compositor may trigger a discarded event
+             * immediately, so we use wp_commit_timer_v1 above to try to
+             * throttle things to a sane rate.
+             *
+             * Ugly as this is, Mesa relies on the same behavior, so it's
+             * probably safe to treat this as the "intended" behavior.
+             */
+            wl_surface_commit(psurf->priv->wsurf);
+            wp_fifo_v1_wait_barrier(psurf->priv->current.fifo);
+        }
+        else
+        {
+            psurf->priv->current.frame_callback = wl_surface_frame(psurf->priv->wsurf);
+            if (psurf->priv->current.frame_callback != NULL)
+            {
+                wl_callback_add_listener(psurf->priv->current.frame_callback,
+                        &FRAME_CALLBACK_LISTENER, psurf);
+            }
+        }
+    }
+
     wl_surface_commit(psurf->priv->wsurf);
     wl_display_flush(psurf->priv->inst->wdpy);
     present_buf->status = BUFFER_STATUS_IN_USE;
@@ -1144,6 +1322,11 @@ done:
     pthread_mutex_lock(&psurf->priv->params.mutex);
     psurf->priv->params.skip_update_callback--;
     pthread_mutex_unlock(&psurf->priv->params.mutex);
+
+    if (presentation_time != NULL)
+    {
+        wl_proxy_wrapper_destroy(presentation_time);
+    }
 
     return success;
 }

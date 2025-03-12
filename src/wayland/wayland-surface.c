@@ -118,6 +118,9 @@ struct _EplImplSurface
     {
         struct wl_event_queue *queue;
 
+        /// A wrapper for the display's wp_presentation object.
+        struct wp_presentation *presentation_time;
+
         /**
          * The explicit synchronization object for this surface, or NULL if we
          * aren't using explicit sync.
@@ -801,6 +804,14 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
 
     if (inst->globals.fifo != NULL && inst->globals.presentation_time != NULL)
     {
+        priv->current.presentation_time = wl_proxy_create_wrapper(inst->globals.presentation_time);
+        if (priv->current.presentation_time == NULL)
+        {
+            eplSetError(plat, EGL_BAD_ALLOC, "Failed to create wp_presentation wrapper");
+            goto done;
+        }
+        wl_proxy_set_queue((struct wl_proxy *) priv->current.presentation_time, priv->current.queue);
+
         priv->current.fifo = wp_fifo_manager_v1_get_fifo(inst->globals.fifo, wsurf);
         if (priv->current.fifo == NULL)
         {
@@ -931,6 +942,10 @@ void eplWlDestroyWindow(EplDisplay *pdpy, EplSurface *psurf,
     if (psurf->priv->current.commit_timer != NULL)
     {
         wp_commit_timer_v1_destroy(psurf->priv->current.commit_timer);
+    }
+    if (psurf->priv->current.presentation_time != NULL)
+    {
+        wl_proxy_wrapper_destroy(psurf->priv->current.presentation_time);
     }
     if (psurf->priv->current.queue != NULL)
     {
@@ -1104,7 +1119,6 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
     WlSwapChain *new_swapchain = NULL;
     EGLBoolean success = EGL_FALSE;
     EGLint swap_interval;
-    struct wp_presentation *presentation_time = NULL;
 
     if (!WaitForPreviousFrames(psurf))
     {
@@ -1122,17 +1136,6 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
     swap_interval = psurf->priv->params.swap_interval;
     psurf->priv->params.skip_update_callback++;
     pthread_mutex_unlock(&psurf->priv->params.mutex);
-
-    if (swap_interval > 0 && inst->globals.presentation_time != NULL)
-    {
-        presentation_time = wl_proxy_create_wrapper(inst->globals.presentation_time);
-        if (presentation_time == NULL)
-        {
-            eplSetError(plat, EGL_BAD_ALLOC, "Failed to create wp_presentation wrapper");
-            goto done;
-        }
-        wl_proxy_set_queue((struct wl_proxy *) presentation_time, psurf->priv->current.queue);
-    }
 
     // If the window has been resized, then allocate a new swapchain. We'll
     // switch to it after presenting.
@@ -1209,11 +1212,12 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
 
     if (swap_interval > 0)
     {
-        if (presentation_time != NULL && psurf->priv->current.fifo != NULL)
+        if (psurf->priv->current.presentation_time != NULL && psurf->priv->current.fifo != NULL)
         {
             assert(psurf->priv->current.presentation_feedback == NULL);
 
-            psurf->priv->current.presentation_feedback = wp_presentation_feedback(presentation_time, psurf->priv->wsurf);
+            psurf->priv->current.presentation_feedback = wp_presentation_feedback(
+                    psurf->priv->current.presentation_time, psurf->priv->wsurf);
             if (psurf->priv->current.presentation_feedback != NULL)
             {
                 wp_presentation_feedback_add_listener(psurf->priv->current.presentation_feedback,
@@ -1322,11 +1326,6 @@ done:
     pthread_mutex_lock(&psurf->priv->params.mutex);
     psurf->priv->params.skip_update_callback--;
     pthread_mutex_unlock(&psurf->priv->params.mutex);
-
-    if (presentation_time != NULL)
-    {
-        wl_proxy_wrapper_destroy(presentation_time);
-    }
 
     return success;
 }

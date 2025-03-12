@@ -1430,3 +1430,37 @@ EGLBoolean eplWlSwapInterval(EplDisplay *pdpy, EplSurface *psurf, EGLint interva
     }
     return EGL_TRUE;
 }
+
+EGLBoolean eplWlWaitGL(EplDisplay *pdpy, EplSurface *psurf)
+{
+    EGLBoolean ret = EGL_TRUE;
+
+    pdpy->platform->priv->egl.Finish();
+    if (psurf != NULL && psurf->type == EPL_SURFACE_TYPE_WINDOW)
+    {
+        /*
+         * Wait until the server has received the commit from the last
+         * eglSwapBuffers.
+         *
+         * If possible, we'll also wait for the presentation feedback so that
+         * the last frame is actually on screen.
+         *
+         * Note that if we don't have presentation timing support, then we do
+         * NOT wait for a wl_surface::frame callback, because that could block
+         * forever.
+         */
+
+        while (psurf->priv->current.presentation_feedback != NULL
+                || psurf->priv->current.last_swap_sync != NULL)
+        {
+            if (wl_display_dispatch_queue(psurf->priv->inst->wdpy, psurf->priv->current.queue) < 0)
+            {
+                eplSetError(psurf->priv->inst->platform, EGL_BAD_ALLOC,
+                        "Failed to dispatch Wayland events");
+                return EGL_FALSE;
+            }
+        }
+    }
+
+    return ret;
+}

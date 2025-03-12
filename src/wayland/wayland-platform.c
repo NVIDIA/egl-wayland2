@@ -58,6 +58,7 @@ static const EplImplFuncs WL_IMPL_FUNCS =
     .CreateWindowSurface = eplWlCreateWindowSurface,
     .DestroySurface = eplWlDestroyWindow,
     .SwapBuffers = eplWlSwapBuffers,
+    .WaitGL = eplWlWaitGL,
     .SwapInterval = eplWlSwapInterval,
 };
 

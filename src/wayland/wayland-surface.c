@@ -98,7 +98,6 @@ struct _EplImplSurface
     WlDisplayInstance *inst;
 
     long int native_window_version;
-    struct wl_surface *wsurf;
 
     /**
      * The color format that we're using for this window.
@@ -117,6 +116,9 @@ struct _EplImplSurface
     struct
     {
         struct wl_event_queue *queue;
+
+        /// A wrapper for the app's wl_surface.
+        struct wl_surface *wsurf;
 
         /// A wrapper for the display's wp_presentation object.
         struct wp_presentation *presentation_time;
@@ -463,7 +465,7 @@ static EGLBoolean CreateSurfaceFeedback(EplSurface *psurf)
     }
 
     wl_proxy_set_queue((struct wl_proxy *) wrapper, psurf->priv->current.queue);
-    state->feedback = zwp_linux_dmabuf_v1_get_surface_feedback(wrapper, psurf->priv->wsurf);
+    state->feedback = zwp_linux_dmabuf_v1_get_surface_feedback(wrapper, psurf->priv->current.wsurf);
     wl_proxy_wrapper_destroy(wrapper);
 
     if (state->feedback == NULL)
@@ -573,14 +575,14 @@ static EGLBoolean SwapChainRealloc(EplSurface *psurf,
     {
         if (psurf->priv->current.num_surface_modifiers > 0)
         {
-            swapchain = eplWlSwapChainCreate(psurf->priv->inst, psurf->priv->wsurf,
+            swapchain = eplWlSwapChainCreate(psurf->priv->inst, psurf->priv->current.wsurf,
                     width, height, driver_format->fourcc, EGL_FALSE,
                     psurf->priv->current.surface_modifiers,
                     psurf->priv->current.num_surface_modifiers);
         }
         else
         {
-            swapchain = eplWlSwapChainCreate(psurf->priv->inst, psurf->priv->wsurf,
+            swapchain = eplWlSwapChainCreate(psurf->priv->inst, psurf->priv->current.wsurf,
                     width, height, driver_format->fourcc, EGL_TRUE,
                     driver_format->modifiers, driver_format->num_modifiers);
         }
@@ -685,6 +687,7 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
     struct wl_egl_window *window = native_surface;
     long int windowVersion = 0;
     struct wl_surface *wsurf = NULL;
+    uint32_t wsurf_id;
     const EplConfig *configInfo = NULL;
     const WlDmaBufFormat *driver_format = NULL;
     EGLSurface internalSurface = EGL_NO_SURFACE;
@@ -709,10 +712,11 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
      * an application can call wl_egl_window_create multiple times to create
      * multiple wl_egl_window structs for the same wl_surface.
      */
+    wsurf_id = wl_proxy_get_id((struct wl_proxy *) wsurf);
     glvnd_list_for_each_entry(otherSurf, existing_surfaces, entry)
     {
         if (otherSurf->type == EPL_SURFACE_TYPE_WINDOW && otherSurf->priv != NULL
-                && wl_proxy_get_id((struct wl_proxy *) otherSurf->priv->wsurf) == wl_proxy_get_id((struct wl_proxy *) wsurf))
+                && wl_proxy_get_id((struct wl_proxy *) otherSurf->priv->current.wsurf) == wsurf_id)
         {
             eplSetError(pdpy->platform, EGL_BAD_ALLOC,
                     "An EGLSurface already exists for wl_surface %p\n", wsurf);
@@ -777,13 +781,13 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
         goto done;
     }
 
-    priv->wsurf = wl_proxy_create_wrapper(wsurf);
-    if (priv->wsurf == NULL)
+    priv->current.wsurf = wl_proxy_create_wrapper(wsurf);
+    if (priv->current.wsurf == NULL)
     {
         eplSetError(plat, EGL_BAD_ALLOC, "Failed to create internal wl_surface wrapper");
         goto done;
     }
-    wl_proxy_set_queue((struct wl_proxy *) priv->wsurf, priv->current.queue);
+    wl_proxy_set_queue((struct wl_proxy *) priv->current.wsurf, priv->current.queue);
 
     priv->native_window_version = windowVersion;
     priv->driver_format = driver_format;
@@ -795,7 +799,7 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
 
     if (inst->globals.syncobj != NULL)
     {
-        priv->current.syncobj = wp_linux_drm_syncobj_manager_v1_get_surface(inst->globals.syncobj, priv->wsurf);
+        priv->current.syncobj = wp_linux_drm_syncobj_manager_v1_get_surface(inst->globals.syncobj, priv->current.wsurf);
         if (priv->current.syncobj == NULL)
         {
             goto done;
@@ -812,7 +816,7 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
         }
         wl_proxy_set_queue((struct wl_proxy *) priv->current.presentation_time, priv->current.queue);
 
-        priv->current.fifo = wp_fifo_manager_v1_get_fifo(inst->globals.fifo, wsurf);
+        priv->current.fifo = wp_fifo_manager_v1_get_fifo(inst->globals.fifo, priv->current.wsurf);
         if (priv->current.fifo == NULL)
         {
             goto done;
@@ -820,7 +824,7 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
 
         if (inst->globals.commit_timing != NULL)
         {
-            priv->current.commit_timer = wp_commit_timing_manager_v1_get_timer(inst->globals.commit_timing, wsurf);
+            priv->current.commit_timer = wp_commit_timing_manager_v1_get_timer(inst->globals.commit_timing, priv->current.wsurf);
             if (priv->current.commit_timer == NULL)
             {
                 goto done;
@@ -901,9 +905,9 @@ void eplWlDestroyWindow(EplDisplay *pdpy, EplSurface *psurf,
         psurf->internal_surface = EGL_NO_SURFACE;
     }
 
-    if (psurf->priv->wsurf != NULL)
+    if (psurf->priv->current.wsurf != NULL)
     {
-        wl_proxy_wrapper_destroy(psurf->priv->wsurf);
+        wl_proxy_wrapper_destroy(psurf->priv->current.wsurf);
     }
 
     if (psurf->priv->params.native_window != NULL)
@@ -1177,19 +1181,19 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
     }
 
     if (rects != NULL && n_rects > 0
-            && wl_proxy_get_version((struct wl_proxy *) psurf->priv->wsurf) >= 3)
+            && wl_proxy_get_version((struct wl_proxy *) psurf->priv->current.wsurf) >= 3)
     {
         EGLint i;
         for (i=0; i<n_rects; i++)
         {
             const EGLint *rect = rects + (i * 4);
-            wl_surface_damage_buffer(psurf->priv->wsurf,
+            wl_surface_damage_buffer(psurf->priv->current.wsurf,
                     rect[0], rect[1], rect[2], rect[3]);
         }
     }
     else
     {
-        wl_surface_damage(psurf->priv->wsurf, 0, 0, INT_MAX, INT_MAX);
+        wl_surface_damage(psurf->priv->current.wsurf, 0, 0, INT_MAX, INT_MAX);
     }
 
     if (psurf->priv->current.syncobj != NULL)
@@ -1208,7 +1212,7 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
                 (uint32_t) present_buf->timeline.point);
     }
 
-    wl_surface_attach(psurf->priv->wsurf, present_buf->wbuf, 0, 0);
+    wl_surface_attach(psurf->priv->current.wsurf, present_buf->wbuf, 0, 0);
 
     if (swap_interval > 0)
     {
@@ -1217,7 +1221,7 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
             assert(psurf->priv->current.presentation_feedback == NULL);
 
             psurf->priv->current.presentation_feedback = wp_presentation_feedback(
-                    psurf->priv->current.presentation_time, psurf->priv->wsurf);
+                    psurf->priv->current.presentation_time, psurf->priv->current.wsurf);
             if (psurf->priv->current.presentation_feedback != NULL)
             {
                 wp_presentation_feedback_add_listener(psurf->priv->current.presentation_feedback,
@@ -1261,12 +1265,12 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
              * Ugly as this is, Mesa relies on the same behavior, so it's
              * probably safe to treat this as the "intended" behavior.
              */
-            wl_surface_commit(psurf->priv->wsurf);
+            wl_surface_commit(psurf->priv->current.wsurf);
             wp_fifo_v1_wait_barrier(psurf->priv->current.fifo);
         }
         else
         {
-            psurf->priv->current.frame_callback = wl_surface_frame(psurf->priv->wsurf);
+            psurf->priv->current.frame_callback = wl_surface_frame(psurf->priv->current.wsurf);
             if (psurf->priv->current.frame_callback != NULL)
             {
                 wl_callback_add_listener(psurf->priv->current.frame_callback,
@@ -1275,7 +1279,7 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
         }
     }
 
-    wl_surface_commit(psurf->priv->wsurf);
+    wl_surface_commit(psurf->priv->current.wsurf);
     wl_display_flush(psurf->priv->inst->wdpy);
     present_buf->status = BUFFER_STATUS_IN_USE;
 

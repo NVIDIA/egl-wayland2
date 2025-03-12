@@ -979,26 +979,24 @@ static void on_wp_presentation_feedback_sync_output(void *userdata,
         struct wp_presentation_feedback *wfeedback, struct wl_output *output)
 {
 }
-static void common_wp_presentation_feedback_done(EplSurface *psurf,
-        struct wp_presentation_feedback *wfeedback)
+static void DiscardPresentationFeedback(EplSurface *psurf)
 {
-    if (psurf->priv->current.presentation_feedback == wfeedback)
+    struct timespec ts;
+    if (clock_gettime(psurf->priv->inst->presentation_time_clock_id, &ts) == 0)
     {
-        wp_presentation_feedback_destroy(psurf->priv->current.presentation_feedback);
-        psurf->priv->current.presentation_feedback = NULL;
+        psurf->priv->current.last_present_timestamp = ((uint64_t) ts.tv_sec) * 1000000000 + ts.tv_nsec;
     }
+
+    wp_presentation_feedback_destroy(psurf->priv->current.presentation_feedback);
+    psurf->priv->current.presentation_feedback = NULL;
 }
 static void on_wp_presentation_feedback_discarded(void *userdata,
         struct wp_presentation_feedback *wfeedback)
 {
     EplSurface *psurf = userdata;
-    struct timespec ts;
 
-    if (clock_gettime(psurf->priv->inst->presentation_time_clock_id, &ts) == 0)
-    {
-        psurf->priv->current.last_present_timestamp = ((uint64_t) ts.tv_sec) * 1000000000 + ts.tv_nsec;
-    }
-    common_wp_presentation_feedback_done(psurf, wfeedback);
+    assert(wfeedback == psurf->priv->current.presentation_feedback);
+    DiscardPresentationFeedback(psurf);
 }
 static void on_wp_presentation_feedback_presented(void *userdata,
         struct wp_presentation_feedback *wfeedback,
@@ -1007,9 +1005,13 @@ static void on_wp_presentation_feedback_presented(void *userdata,
 {
     EplSurface *psurf = userdata;
 
+    assert(wfeedback == psurf->priv->current.presentation_feedback);
+
     psurf->priv->current.last_present_timestamp = (((uint64_t) tv_sec_hi) << 32 | tv_sec_lo) + tv_nsec;
     psurf->priv->current.last_present_refresh = refresh;
-    common_wp_presentation_feedback_done(psurf, wfeedback);
+
+    wp_presentation_feedback_destroy(psurf->priv->current.presentation_feedback);
+    psurf->priv->current.presentation_feedback = NULL;
 }
 static const struct wp_presentation_feedback_listener PRESENTATION_FEEDBACK_LISTENER =
 {
@@ -1124,11 +1126,6 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
     EGLBoolean success = EGL_FALSE;
     EGLint swap_interval;
 
-    if (!WaitForPreviousFrames(psurf))
-    {
-        return EGL_FALSE;
-    }
-
     pthread_mutex_lock(&psurf->priv->params.mutex);
     if (psurf->priv->params.native_window == NULL)
     {
@@ -1140,6 +1137,10 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
     swap_interval = psurf->priv->params.swap_interval;
     psurf->priv->params.skip_update_callback++;
     pthread_mutex_unlock(&psurf->priv->params.mutex);
+
+    // Dispatch any pending events, but don't block for them. This will ensure
+    // that we pick up any modifier changes that the server might have sent.
+    wl_display_dispatch_queue_pending(psurf->priv->inst->wdpy, psurf->priv->current.queue);
 
     // If the window has been resized, then allocate a new swapchain. We'll
     // switch to it after presenting.
@@ -1180,6 +1181,34 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
         goto done;
     }
 
+    if (swap_interval > 0)
+    {
+        if (!WaitForPreviousFrames(psurf))
+        {
+            return EGL_FALSE;
+        }
+    }
+    else
+    {
+        // If the swap interval is zero, then don't wait for a previous frame.
+        // Try to present immediately.
+        if (psurf->priv->current.presentation_feedback != NULL)
+        {
+            // If we still have an outstanding presentation, then treat this as
+            // a discarded frame, and use the current time as the last
+            // presentation time.
+            DiscardPresentationFeedback(psurf);
+        }
+        if (psurf->priv->current.frame_callback != NULL)
+        {
+            wl_callback_destroy(psurf->priv->current.frame_callback);
+            psurf->priv->current.frame_callback = NULL;
+        }
+    }
+
+    assert(psurf->priv->current.presentation_feedback == NULL);
+    assert(psurf->priv->current.frame_callback == NULL);
+
     if (rects != NULL && n_rects > 0
             && wl_proxy_get_version((struct wl_proxy *) psurf->priv->current.wsurf) >= 3)
     {
@@ -1214,20 +1243,27 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
 
     wl_surface_attach(psurf->priv->current.wsurf, present_buf->wbuf, 0, 0);
 
-    if (swap_interval > 0)
+    if (psurf->priv->current.presentation_time != NULL && psurf->priv->current.fifo != NULL)
     {
-        if (psurf->priv->current.presentation_time != NULL && psurf->priv->current.fifo != NULL)
+        /*
+         * Request presentation feedback regardless of what the current swap
+         * interval is.
+         *
+         * Whether we wait for it in the next eglSwapBuffers call will depend
+         * on what the swap interval is at that point. But, even if the swap
+         * interval is zero, we'll want to be able to wait for presentation
+         * in eglWaitGL.
+         */
+        psurf->priv->current.presentation_feedback = wp_presentation_feedback(
+                psurf->priv->current.presentation_time, psurf->priv->current.wsurf);
+        if (psurf->priv->current.presentation_feedback != NULL)
         {
-            assert(psurf->priv->current.presentation_feedback == NULL);
+            wp_presentation_feedback_add_listener(psurf->priv->current.presentation_feedback,
+                    &PRESENTATION_FEEDBACK_LISTENER, psurf);
+        }
 
-            psurf->priv->current.presentation_feedback = wp_presentation_feedback(
-                    psurf->priv->current.presentation_time, psurf->priv->current.wsurf);
-            if (psurf->priv->current.presentation_feedback != NULL)
-            {
-                wp_presentation_feedback_add_listener(psurf->priv->current.presentation_feedback,
-                        &PRESENTATION_FEEDBACK_LISTENER, psurf);
-            }
-
+        if (swap_interval > 0)
+        {
             if (psurf->priv->current.commit_timer != NULL
                     && psurf->priv->current.last_present_timestamp != 0)
             {
@@ -1268,14 +1304,16 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
             wl_surface_commit(psurf->priv->current.wsurf);
             wp_fifo_v1_wait_barrier(psurf->priv->current.fifo);
         }
-        else
+    }
+    else
+    {
+        // If we don't have FIFO or presentation time support, then just
+        // request a frame callback.
+        psurf->priv->current.frame_callback = wl_surface_frame(psurf->priv->current.wsurf);
+        if (psurf->priv->current.frame_callback != NULL)
         {
-            psurf->priv->current.frame_callback = wl_surface_frame(psurf->priv->current.wsurf);
-            if (psurf->priv->current.frame_callback != NULL)
-            {
-                wl_callback_add_listener(psurf->priv->current.frame_callback,
-                        &FRAME_CALLBACK_LISTENER, psurf);
-            }
+            wl_callback_add_listener(psurf->priv->current.frame_callback,
+                    &FRAME_CALLBACK_LISTENER, psurf);
         }
     }
 

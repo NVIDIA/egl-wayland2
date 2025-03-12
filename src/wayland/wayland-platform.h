@@ -124,4 +124,6 @@ void eplWlDestroyWindow(EplDisplay *pdpy, EplSurface *psurf,
 EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
         EplSurface *psurf, const EGLint *rects, EGLint n_rects);
 
+EGLBoolean eplWlSwapInterval(EplDisplay *pdpy, EplSurface *psurf, EGLint interval);
+
 #endif // WAYLAND_PLATFORM_H

@@ -1330,3 +1330,19 @@ done:
 
     return success;
 }
+
+EGLBoolean eplWlSwapInterval(EplDisplay *pdpy, EplSurface *psurf, EGLint interval)
+{
+    if (psurf->type == EPL_SURFACE_TYPE_WINDOW)
+    {
+        if (interval < 0)
+        {
+            interval = 0;
+        }
+
+        pthread_mutex_lock(&psurf->priv->params.mutex);
+        psurf->priv->params.swap_interval = interval;
+        pthread_mutex_unlock(&psurf->priv->params.mutex);
+    }
+    return EGL_TRUE;
+}

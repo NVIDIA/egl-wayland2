@@ -58,6 +58,7 @@ static const EplImplFuncs WL_IMPL_FUNCS =
     .CreateWindowSurface = eplWlCreateWindowSurface,
     .DestroySurface = eplWlDestroyWindow,
     .SwapBuffers = eplWlSwapBuffers,
+    .SwapInterval = eplWlSwapInterval,
 };
 
 static EGLBoolean LoadProcHelper(EplPlatformData *plat, void *handle, void **ptr, const char *name)

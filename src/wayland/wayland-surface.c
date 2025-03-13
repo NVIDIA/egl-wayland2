@@ -1262,6 +1262,8 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
                     &PRESENTATION_FEEDBACK_LISTENER, psurf);
         }
 
+        wp_fifo_v1_set_barrier(psurf->priv->current.fifo);
+
         if (swap_interval > 0)
         {
             if (psurf->priv->current.commit_timer != NULL
@@ -1278,7 +1280,6 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
                 }
             }
 
-            wp_fifo_v1_set_barrier(psurf->priv->current.fifo);
             wp_fifo_v1_wait_barrier(psurf->priv->current.fifo);
 
             /*

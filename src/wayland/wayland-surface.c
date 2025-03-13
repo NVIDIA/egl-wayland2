@@ -135,12 +135,24 @@ struct _EplImplSurface
         WlSwapChain *swapchain;
 
         /**
-         * A callback for a pending wl_frame event.
+         * A callback for the last presentation.
          */
         struct wl_callback *frame_callback;
 
         /**
+         * A callback for a wl_display::sync request after the previous
+         * eglSwapBuffers.
+         */
+        struct wl_callback *last_swap_sync;
+
+        /**
          * A presentation feedback object for the last presented frame.
+         *
+         * If this is non-NULL, then we can expect to receive a presented or
+         * discarded event in finite time.
+         *
+         * Currently, that means we've got a wp_fifo_v1 object, and the last
+         * eglSwapBuffers had a nonzero swap interval.
          */
         struct wp_presentation_feedback *presentation_feedback;
 
@@ -935,6 +947,10 @@ void eplWlDestroyWindow(EplDisplay *pdpy, EplSurface *psurf,
     {
         wl_callback_destroy(psurf->priv->current.frame_callback);
     }
+    if (psurf->priv->current.last_swap_sync != NULL)
+    {
+        wl_callback_destroy(psurf->priv->current.last_swap_sync);
+    }
     if (psurf->priv->current.presentation_feedback != NULL)
     {
         wp_presentation_feedback_destroy(psurf->priv->current.presentation_feedback);
@@ -969,9 +985,13 @@ static void on_frame_done(void *userdata, struct wl_callback *callback, uint32_t
 
     if (psurf->priv->current.frame_callback == callback)
     {
-        wl_callback_destroy(psurf->priv->current.frame_callback);
         psurf->priv->current.frame_callback = NULL;
     }
+    if (psurf->priv->current.last_swap_sync == callback)
+    {
+        psurf->priv->current.last_swap_sync = NULL;
+    }
+    wl_callback_destroy(callback);
 }
 static const struct wl_callback_listener FRAME_CALLBACK_LISTENER = { on_frame_done };
 
@@ -1029,6 +1049,7 @@ static const struct wp_presentation_feedback_listener PRESENTATION_FEEDBACK_LIST
 static EGLBoolean WaitForPreviousFrames(EplSurface *psurf)
 {
     while (psurf->priv->current.frame_callback != NULL
+            || psurf->priv->current.last_swap_sync != NULL
             || psurf->priv->current.presentation_feedback != NULL)
     {
         if (wl_display_dispatch_queue(psurf->priv->inst->wdpy, psurf->priv->current.queue) < 0)
@@ -1124,6 +1145,7 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
     WlPresentBuffer *present_buf = NULL;
     WlSwapChain *new_swapchain = NULL;
     EGLBoolean success = EGL_FALSE;
+    struct wl_display *wdpy_wrapper = NULL;
     EGLint swap_interval;
 
     pthread_mutex_lock(&psurf->priv->params.mutex);
@@ -1204,10 +1226,16 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
             wl_callback_destroy(psurf->priv->current.frame_callback);
             psurf->priv->current.frame_callback = NULL;
         }
+        if (psurf->priv->current.last_swap_sync != NULL)
+        {
+            wl_callback_destroy(psurf->priv->current.last_swap_sync);
+            psurf->priv->current.last_swap_sync = NULL;
+        }
     }
 
     assert(psurf->priv->current.presentation_feedback == NULL);
     assert(psurf->priv->current.frame_callback == NULL);
+    assert(psurf->priv->current.last_swap_sync == NULL);
 
     if (rects != NULL && n_rects > 0
             && wl_proxy_get_version((struct wl_proxy *) psurf->priv->current.wsurf) >= 3)
@@ -1245,23 +1273,6 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
 
     if (psurf->priv->current.presentation_time != NULL && psurf->priv->current.fifo != NULL)
     {
-        /*
-         * Request presentation feedback regardless of what the current swap
-         * interval is.
-         *
-         * Whether we wait for it in the next eglSwapBuffers call will depend
-         * on what the swap interval is at that point. But, even if the swap
-         * interval is zero, we'll want to be able to wait for presentation
-         * in eglWaitGL.
-         */
-        psurf->priv->current.presentation_feedback = wp_presentation_feedback(
-                psurf->priv->current.presentation_time, psurf->priv->current.wsurf);
-        if (psurf->priv->current.presentation_feedback != NULL)
-        {
-            wp_presentation_feedback_add_listener(psurf->priv->current.presentation_feedback,
-                    &PRESENTATION_FEEDBACK_LISTENER, psurf);
-        }
-
         wp_fifo_v1_set_barrier(psurf->priv->current.fifo);
 
         if (swap_interval > 0)
@@ -1279,6 +1290,15 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
                             (uint32_t) (sec >> 32), (uint32_t) sec, nsec);
                 }
             }
+
+            psurf->priv->current.presentation_feedback = wp_presentation_feedback(
+                    psurf->priv->current.presentation_time, psurf->priv->current.wsurf);
+            if (psurf->priv->current.presentation_feedback != NULL)
+            {
+                wp_presentation_feedback_add_listener(psurf->priv->current.presentation_feedback,
+                        &PRESENTATION_FEEDBACK_LISTENER, psurf);
+            }
+
 
             wp_fifo_v1_wait_barrier(psurf->priv->current.fifo);
 
@@ -1319,6 +1339,28 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
     }
 
     wl_surface_commit(psurf->priv->current.wsurf);
+
+    /*
+     * Send a wl_display::sync request after the commit.
+     *
+     * If we don't have FIFO support, or if the swap interval is zero, then we
+     * can't safely use the presentation timing event in eglWaitGL, but we can
+     * at least wait to make sure that the server has received the present
+     * requests.
+     */
+    wdpy_wrapper = wl_proxy_create_wrapper(psurf->priv->inst->wdpy);
+    if (wdpy_wrapper != NULL)
+    {
+        wl_proxy_set_queue((struct wl_proxy *) wdpy_wrapper, psurf->priv->current.queue);
+        psurf->priv->current.last_swap_sync = wl_display_sync(wdpy_wrapper);
+        wl_proxy_wrapper_destroy(wdpy_wrapper);
+        if (psurf->priv->current.last_swap_sync != NULL)
+        {
+            wl_callback_add_listener(psurf->priv->current.last_swap_sync,
+                    &FRAME_CALLBACK_LISTENER, psurf);
+        }
+    }
+
     wl_display_flush(psurf->priv->inst->wdpy);
     present_buf->status = BUFFER_STATUS_IN_USE;
 

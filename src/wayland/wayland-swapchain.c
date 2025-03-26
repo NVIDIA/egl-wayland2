@@ -364,7 +364,7 @@ WlSwapChain *eplWlSwapChainCreate(WlDisplayInstance *inst, struct wl_surface *ws
     }
     if (modifiers != NULL && num_modifiers > 0)
     {
-        gbo = gbm_bo_create_with_modifiers2(inst->gbmdev,
+        gbo = inst->platform->priv->gbm.bo_create_with_modifiers2(inst->gbmdev,
                 width, height, fourcc, modifiers, num_modifiers, flags);
     }
     else

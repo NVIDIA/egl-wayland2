@@ -28,6 +28,7 @@
 #include <EGL/eglext.h>
 
 #include <xf86drm.h>
+#include <gbm.h>
 
 #include "platform-base.h"
 #include "platform-impl.h"
@@ -86,6 +87,16 @@ struct _EplImplPlatform
         struct wl_event_queue * (* display_create_queue_with_name) (
                 struct wl_display *display, const char *name);
     } wl;
+
+    struct
+    {
+        struct gbm_bo * (* bo_create_with_modifiers2) (struct gbm_device *gbm,
+                uint32_t width, uint32_t height,
+                uint32_t format,
+                const uint64_t *modifiers,
+                const unsigned int count,
+                uint32_t flags);
+    } gbm;
 
     EGLBoolean timeline_funcs_supported;
 };

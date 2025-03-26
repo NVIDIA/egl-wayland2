@@ -72,6 +72,16 @@ static EGLBoolean LoadProcHelper(EplPlatformData *plat, void *handle, void **ptr
     return EGL_TRUE;
 }
 
+static struct gbm_bo *fallback_gbo_create_with_modifiers2(struct gbm_device *gbm,
+        uint32_t width, uint32_t height,
+        uint32_t format,
+        const uint64_t *modifiers,
+        const unsigned int count,
+        uint32_t flags)
+{
+    return gbm_bo_create_with_modifiers(gbm, width, height, format, modifiers, count);
+}
+
 PUBLIC EGLBoolean loadEGLExternalPlatform(int major, int minor,
                                    const EGLExtDriver *driver,
                                    EGLExtPlatform *extplatform)
@@ -79,13 +89,6 @@ PUBLIC EGLBoolean loadEGLExternalPlatform(int major, int minor,
     EplPlatformData *plat = NULL;
     EGLBoolean timelineSupported = EGL_TRUE;
     pfn_eglPlatformGetVersionNVX ptr_eglPlatformGetVersionNVX;
-
-    // Before we do anything else, make sure that we've got a recent enough
-    // version of libgbm.
-    if (dlsym(RTLD_DEFAULT, "gbm_bo_create_with_modifiers2") == NULL)
-    {
-        return EGL_FALSE;
-    }
 
     plat = eplPlatformBaseAllocate(major, minor,
         driver, extplatform, EGL_PLATFORM_WAYLAND_KHR, &WL_IMPL_FUNCS,
@@ -174,6 +177,14 @@ PUBLIC EGLBoolean loadEGLExternalPlatform(int major, int minor,
     plat->priv->timeline_funcs_supported = timelineSupported;
 
 #undef LOAD_PROC
+
+    // Load gbm_bo_create_with_modifiers2 if it's available. If it's not, then
+    // we'll fall back to using gbm_bo_create_with_modifiers.
+    plat->priv->gbm.bo_create_with_modifiers2 = dlsym(RTLD_DEFAULT, "gbm_bo_create_with_modifiers2");
+    if (plat->priv->gbm.bo_create_with_modifiers2 == NULL)
+    {
+        plat->priv->gbm.bo_create_with_modifiers2 = fallback_gbo_create_with_modifiers2;
+    }
 
     eplPlatformBaseInitFinish(plat);
     return EGL_TRUE;

@@ -5,7 +5,9 @@
 
 This is a new implementation of the EGL External Platform Library for Wayland
 (`EGL_KHR_platform_wayland`), using the NVIDIA driver's new platform surface
-interface.
+interface, which simplifies a lot of the library and improves window resizing.
+
+See [Implementation Notes](#implementation-notes) for more details.
 
 ## Building and Installing
 
@@ -108,3 +110,31 @@ previous EGLStream-based implementation.
 In particular, this library should handle window resizing better, especially in
 cases such as calling `wl_egl_window_resize` for a window that isn't the
 current EGLSurface.
+
+Because EGLStreams are not resizable, resizing a window in the old library
+requires creating an new EGLSurface internally, and then calling eglMakeCurrent
+to switch to it.
+
+If the application calls `wl_egl_window_resize` when the window isn't current,
+then the library can't safely apply the new size until the next eglSwapBuffers
+call, so you end up with an entire frame with the old size. While that's
+technically allowed by the EGL spec, it means that this sequence doesn't work
+the way you'd expect:
+
+```c
+window = wl_egl_window_create(wl_surface, 100, 100);
+EGLSurface surf = eglCreateWindowSurface(dpy, config, window, NULL);
+wl_egl_window_resize(window, 200, 200, 0, 0);
+eglMakeCurrent(dpy, surf, surf, ctx);
+glViewport(200, 200);
+/*
+ * Draw stuff, but the rendering is distorted because OpenGL's viewport
+ * transformation is for 200x200, but the window is still 100x100.
+ */
+eglSwapBuffers(dpy, surf); // Displays a 100x100 window
+```
+
+With the new platform surface interface, the driver will call into the platform
+library at certain points to let the platform deal with a window resize. As a
+result, an application can call `wl_egl_window_resize` from any thread, and
+the resize will be applied as soon as it calls `glViewport`.

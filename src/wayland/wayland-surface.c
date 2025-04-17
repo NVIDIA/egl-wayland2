@@ -588,14 +588,14 @@ static EGLBoolean SwapChainRealloc(EplSurface *psurf,
         if (psurf->priv->current.num_surface_modifiers > 0)
         {
             swapchain = eplWlSwapChainCreate(psurf->priv->inst, psurf->priv->current.wsurf,
-                    width, height, driver_format->fourcc, EGL_FALSE,
+                    width, height, driver_format->fourcc, driver_format->fourcc, EGL_FALSE,
                     psurf->priv->current.surface_modifiers,
                     psurf->priv->current.num_surface_modifiers);
         }
         else
         {
             swapchain = eplWlSwapChainCreate(psurf->priv->inst, psurf->priv->current.wsurf,
-                    width, height, driver_format->fourcc, EGL_TRUE,
+                    width, height, driver_format->fourcc, driver_format->fourcc, EGL_TRUE,
                     driver_format->modifiers, driver_format->num_modifiers);
         }
         if (swapchain == NULL)

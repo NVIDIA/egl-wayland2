@@ -110,7 +110,15 @@ typedef struct
     EGLint width;
     EGLint height;
 
-    uint32_t fourcc;
+    uint32_t render_fourcc;
+
+    /**
+     * The fourcc format code that we send to the server.
+     *
+     * This may be different than \c render_format if the application set the
+     * EGL_PRESENT_OPAQUE_EXT flag for the surface.
+     */
+    uint32_t present_fourcc;
 
     /**
      * The format modifier that we're using for the present buffers.
@@ -167,15 +175,16 @@ typedef struct
  * \param wsurf The wl_surface. This is only used to set an event queue name.
  * \param width The width of the surface
  * \param height The height of the surface
- * \param fourcc The fourcc format code
+ * \param render_fourcc The fourcc code that we pass to the driver for rendering
+ * \param present_fourcc The fourcc code that we pass to the server for presenting
  * \param prime True to use PRIME for presentation, or false if we can present
  *      directly.
  * \param modifiers A list of allowed modifiers for the buffers.
  * \param num_modifiers The number of modifiers in \c modifiers.
  */
 WlSwapChain *eplWlSwapChainCreate(WlDisplayInstance *inst, struct wl_surface *wsurf,
-        uint32_t width, uint32_t height, uint32_t fourcc, EGLBoolean prime,
-        const uint64_t *modifiers, size_t num_modifiers);
+        uint32_t width, uint32_t height, uint32_t render_fourcc, uint32_t present_fourcc,
+        EGLBoolean prime, const uint64_t *modifiers, size_t num_modifiers);
 
 void eplWlSwapChainDestroy(WlDisplayInstance *inst, WlSwapChain *swapchain);
 

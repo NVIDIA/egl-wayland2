@@ -974,8 +974,8 @@ void eplWlDestroyWindow(EplDisplay *pdpy, EplSurface *psurf,
 
     pthread_mutex_destroy(&psurf->priv->params.mutex);
 
-    free(psurf->priv);
     eplWlDisplayInstanceUnref(psurf->priv->inst);
+    free(psurf->priv);
     psurf->priv = NULL;
 }
 

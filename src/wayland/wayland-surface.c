@@ -36,6 +36,7 @@
 #include <wayland-egl-backend.h>
 #include <wayland-client-protocol.h>
 
+#include "platform-utils.h"
 #include "wayland-platform.h"
 #include "wayland-display.h"
 #include "wayland-swapchain.h"
@@ -105,6 +106,11 @@ struct _EplImplSurface
      * This is an entry in the driver's format list.
      */
     const WlDmaBufFormat *driver_format;
+
+    /**
+     * The fourcc format code that we'll send to the server for presentation.
+     */
+    uint32_t present_fourcc;
 
     /**
      * Contains data that should only be accessed while the surface is current
@@ -266,14 +272,14 @@ static void PickDefaultModifiers(EplSurface *psurf)
     }
 
     server_format = eplWlDmaBufFormatFind(psurf->priv->inst->default_feedback->formats,
-            psurf->priv->inst->default_feedback->num_formats, driver_format->fourcc);
+            psurf->priv->inst->default_feedback->num_formats, psurf->priv->present_fourcc);
 
     if (server_format == NULL)
     {
-        // This should never happen: If we didn't find server support for this
-        // format, then we should never have set EGL_WINDOW_BIT for the
-        // EGLConfig.
-        assert(server_format != NULL);
+        // This should never happen unless we're using a different format than
+        // the EGLConfig: If we didn't find server support for this format,
+        // then we should never have set EGL_WINDOW_BIT for the EGLConfig.
+        assert(psurf->priv->present_fourcc != driver_format->fourcc);
         return;
     }
 
@@ -284,11 +290,6 @@ static void PickDefaultModifiers(EplSurface *psurf)
             psurf->priv->current.surface_modifiers[psurf->priv->current.num_surface_modifiers++] = driver_format->modifiers[i];
         }
     }
-
-    // Same as above: If the server doesn't support linear or some common
-    // format with the driver, then we shouldn't have set EGL_WINDOW_BIT.
-    assert(psurf->priv->current.num_surface_modifiers > 0
-            || eplWlDmaBufFormatSupportsModifier(server_format, DRM_FORMAT_MOD_LINEAR));
 }
 
 /**
@@ -330,7 +331,7 @@ static void OnSurfaceFeedbackTrancheFormats(void *userdata,
         {
             continue;
         }
-        if (state->base.format_table[*index].fourcc != psurf->priv->driver_format->fourcc)
+        if (state->base.format_table[*index].fourcc != psurf->priv->present_fourcc)
         {
             continue;
         }
@@ -588,14 +589,14 @@ static EGLBoolean SwapChainRealloc(EplSurface *psurf,
         if (psurf->priv->current.num_surface_modifiers > 0)
         {
             swapchain = eplWlSwapChainCreate(psurf->priv->inst, psurf->priv->current.wsurf,
-                    width, height, driver_format->fourcc, EGL_FALSE,
+                    width, height, driver_format->fourcc, psurf->priv->present_fourcc, EGL_FALSE,
                     psurf->priv->current.surface_modifiers,
                     psurf->priv->current.num_surface_modifiers);
         }
         else
         {
             swapchain = eplWlSwapChainCreate(psurf->priv->inst, psurf->priv->current.wsurf,
-                    width, height, driver_format->fourcc, EGL_TRUE,
+                    width, height, driver_format->fourcc, psurf->priv->present_fourcc, EGL_TRUE,
                     driver_format->modifiers, driver_format->num_modifiers);
         }
         if (swapchain == NULL)
@@ -689,6 +690,37 @@ static void WindowUpdateCallback(void *param)
     }
 }
 
+static const uint32_t FindOpaqueFormat(const EplFormatInfo *fmt)
+{
+    int i;
+
+    if (fmt->colors[3] == 0)
+    {
+        // This is already an opaque format, so just use it as-is.
+        return fmt->fourcc;
+    }
+
+    // Look for a format which has the same bits per pixel, the same RGB sizes
+    // and offsets, and zero for alpha.
+    for (i=0; i<FORMAT_INFO_COUNT; i++)
+    {
+        const EplFormatInfo *other = &FORMAT_INFO_LIST[i];
+        if (other->bpp == fmt->bpp
+                && other->colors[0] == fmt->colors[0]
+                && other->colors[1] == fmt->colors[1]
+                && other->colors[2] == fmt->colors[2]
+                && other->colors[3] == 0
+                && other->offset[0] == fmt->offset[0]
+                && other->offset[1] == fmt->offset[1]
+                && other->offset[2] == fmt->offset[2])
+        {
+            return other->fourcc;
+        }
+    }
+
+    return DRM_FORMAT_INVALID;
+}
+
 EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, EplSurface *psurf,
         EGLConfig config, void *native_surface, const EGLAttrib *attribs, EGLBoolean create_platform,
         const struct glvnd_list *existing_surfaces)
@@ -703,6 +735,8 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
     const EplConfig *configInfo = NULL;
     const WlDmaBufFormat *driver_format = NULL;
     EGLSurface internalSurface = EGL_NO_SURFACE;
+    EGLAttrib *driverAttribs = NULL;
+    EGLBoolean presentOpaque = EGL_FALSE;
     EGLAttrib platformAttribs[] =
     {
         GL_BACK, 0,
@@ -751,6 +785,34 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
     driver_format = eplWlDmaBufFormatFind(inst->driver_formats->formats, inst->driver_formats->num_formats, configInfo->fourcc);
     assert(driver_format != NULL);
 
+    if (attribs != NULL && attribs[0] != EGL_NONE)
+    {
+        int count = eplCountAttribs(attribs);
+        int i;
+
+        driverAttribs = malloc((count + 1) * sizeof(EGLAttrib));
+        if (driverAttribs == NULL)
+        {
+            eplSetError(plat, EGL_BAD_ALLOC, "Out of memory");
+            goto done;
+        }
+
+        count = 0;
+        for (i = 0; attribs[i] != EGL_NONE; i += 2)
+        {
+            if (attribs[i] == EGL_PRESENT_OPAQUE_EXT)
+            {
+                presentOpaque = (attribs[i + 1] != 0);
+            }
+            else
+            {
+                driverAttribs[count++] = attribs[i];
+                driverAttribs[count++] = attribs[i + 1];
+            }
+        }
+        driverAttribs[count] = EGL_NONE;
+    }
+
     // Allocate enough space for the EplImplSurface, plus extra to hold a
     // format modifier list.
     priv = calloc(1, sizeof(EplImplSurface)
@@ -758,14 +820,15 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
     if (priv == NULL)
     {
         eplSetError(plat, EGL_BAD_ALLOC, "Out of memory");
-        return EGL_NO_SURFACE;
+        goto done;
     }
 
     if (pthread_mutex_init(&priv->params.mutex, NULL) != 0)
     {
         free(priv);
+        priv = NULL;
         eplSetError(plat, EGL_BAD_ALLOC, "Failed to create internal mutex");
-        return EGL_NO_SURFACE;
+        goto done;
     }
 
     psurf->priv = priv;
@@ -803,6 +866,18 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
 
     priv->native_window_version = windowVersion;
     priv->driver_format = driver_format;
+    priv->present_fourcc = driver_format->fourcc;
+    if (presentOpaque)
+    {
+        priv->present_fourcc = FindOpaqueFormat(driver_format->fmt);
+        if (priv->present_fourcc == DRM_FORMAT_INVALID)
+        {
+            // This should never happen: Every entry in FORMAT_INFO_LIST should
+            // either be opaque or have a corresponding opaque format.
+            eplSetError(plat, EGL_BAD_ALLOC, "Internal error: Can't find opaque format for EGLConfig");
+            goto done;
+        }
+    }
 
     priv->params.native_window = window;
     priv->params.swap_interval = 1;
@@ -846,6 +921,35 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
 
     // Initialize the modifier list based on the default modifiers.
     PickDefaultModifiers(psurf);
+    if (psurf->priv->current.num_surface_modifiers == 0)
+    {
+        /*
+         * If we didn't find any shared modifiers, then check if the server
+         * supports linear. If it does, then we can use the prime path instead.
+         */
+        const WlDmaBufFormat *server_format = eplWlDmaBufFormatFind(psurf->priv->inst->default_feedback->formats,
+                psurf->priv->inst->default_feedback->num_formats, psurf->priv->present_fourcc);
+        if (server_format == NULL
+                || !eplWlDmaBufFormatSupportsModifier(server_format, DRM_FORMAT_MOD_LINEAR))
+        {
+            /*
+             * If the app set the EGL_PRESENT_OPAQUE_EXT, then the format we're
+             * sending to the server might be different than the format for the
+             * EGLConfig.
+             *
+             * In that case, it's possible (if unlikely) that the server could
+             * have different modifier support.
+             *
+             * If we're using the same modifier as the EGLConfig, then we
+             * shouldn't get here, because the EGL_WINDOW_BIT flag should not
+             * have been set.
+             */
+            assert(psurf->priv->present_fourcc != driver_format->fourcc);
+            eplSetError(plat, EGL_BAD_ALLOC, "No supported format modifiers for opaque format 0x%08x\n",
+                    psurf->priv->present_fourcc);
+            goto done;
+        }
+    }
 
     if (!CreateSurfaceFeedback(psurf))
     {
@@ -869,7 +973,7 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
 
     platformAttribs[1] = (EGLAttrib) priv->current.swapchain->render_buffer;
     internalSurface = inst->platform->priv->egl.PlatformCreateSurfaceNVX(inst->internal_display->edpy,
-            config, platformAttribs, attribs);
+            config, platformAttribs, driverAttribs);
     if (internalSurface == EGL_NO_SURFACE)
     {
         goto done;
@@ -887,6 +991,7 @@ done:
     {
         eplWlDestroyWindow(pdpy, psurf, existing_surfaces);
     }
+    free(driverAttribs);
     return internalSurface;
 }
 

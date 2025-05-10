@@ -118,6 +118,11 @@ typedef struct
      * True if we always to use PRIME.
      */
     EGLBoolean force_prime;
+
+    /**
+     * The EGL_EXTENSIONS string for this display.
+     */
+    char *extension_string;
 } WlDisplayInstance;
 
 EPL_REFCOUNT_DECLARE_TYPE_FUNCS(WlDisplayInstance, eplWlDisplayInstance);
@@ -172,5 +177,7 @@ EGLBoolean eplWlGetPlatformDisplay(EplPlatformData *plat, EplDisplay *pdpy,
 void eplWlCleanupDisplay(EplDisplay *pdpy);
 EGLBoolean eplWlInitializeDisplay(EplPlatformData *plat, EplDisplay *pdpy, EGLint *major, EGLint *minor);
 void eplWlTerminateDisplay(EplPlatformData *plat, EplDisplay *pdpy);
+
+const char *eplWlHookQueryString(EGLDisplay edpy, EGLint name);
 
 #endif // WAYLAND_DISPLAY_H

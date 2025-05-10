@@ -212,7 +212,7 @@ static WlPresentBuffer *SwapChainAppendPresentBuffer(WlDisplayInstance *inst,
     }
 
     buf->wbuf = ShareDmaBuf(inst, swapchain->queue, dmabuf, swapchain->width, swapchain->height,
-            stride, offset, swapchain->fourcc, swapchain->modifier);
+            stride, offset, swapchain->present_fourcc, swapchain->modifier);
     if (buf->wbuf == NULL)
     {
         DestroyPresentBuffer(inst, buf);
@@ -255,8 +255,8 @@ WlPresentBuffer *eplWlSwapChainCreatePresentBuffer(WlDisplayInstance *inst,
 
 
     colorbuf = inst->platform->priv->egl.PlatformAllocColorBufferNVX(
-            inst->internal_display->edpy, swapchain->width, swapchain->height, swapchain->fourcc,
-            swapchain->modifier, swapchain->prime);
+            inst->internal_display->edpy, swapchain->width, swapchain->height,
+            swapchain->render_fourcc, swapchain->modifier, swapchain->prime);
     if (colorbuf == NULL)
     {
         return NULL;
@@ -314,8 +314,8 @@ void eplWlSwapChainDestroy(WlDisplayInstance *inst, WlSwapChain *swapchain)
 }
 
 WlSwapChain *eplWlSwapChainCreate(WlDisplayInstance *inst, struct wl_surface *wsurf,
-        uint32_t width, uint32_t height, uint32_t fourcc, EGLBoolean prime,
-        const uint64_t *modifiers, size_t num_modifiers)
+        uint32_t width, uint32_t height, uint32_t render_fourcc, uint32_t present_fourcc,
+        EGLBoolean prime, const uint64_t *modifiers, size_t num_modifiers)
 {
     WlSwapChain *swapchain = NULL;
     uint32_t flags = 0;
@@ -332,7 +332,8 @@ WlSwapChain *eplWlSwapChainCreate(WlDisplayInstance *inst, struct wl_surface *ws
     glvnd_list_init(&swapchain->present_buffers);
     swapchain->width = width;
     swapchain->height = height;
-    swapchain->fourcc = fourcc;
+    swapchain->render_fourcc = render_fourcc;
+    swapchain->present_fourcc = present_fourcc;
     swapchain->modifier = DRM_FORMAT_MOD_INVALID;
     swapchain->prime = prime;
     if (inst->platform->priv->wl.display_create_queue_with_name != NULL)
@@ -365,11 +366,11 @@ WlSwapChain *eplWlSwapChainCreate(WlDisplayInstance *inst, struct wl_surface *ws
     if (modifiers != NULL && num_modifiers > 0)
     {
         gbo = inst->platform->priv->gbm.bo_create_with_modifiers2(inst->gbmdev,
-                width, height, fourcc, modifiers, num_modifiers, flags);
+                width, height, render_fourcc, modifiers, num_modifiers, flags);
     }
     else
     {
-        gbo = gbm_bo_create(inst->gbmdev, width, height, fourcc, flags);
+        gbo = gbm_bo_create(inst->gbmdev, width, height, render_fourcc, flags);
     }
     if (gbo == NULL)
     {
@@ -383,7 +384,7 @@ WlSwapChain *eplWlSwapChainCreate(WlDisplayInstance *inst, struct wl_surface *ws
     }
 
     swapchain->render_buffer = inst->platform->priv->egl.PlatformImportColorBufferNVX(
-            inst->internal_display->edpy, dmabuf, width, height, fourcc,
+            inst->internal_display->edpy, dmabuf, width, height, render_fourcc,
             gbm_bo_get_stride(gbo), gbm_bo_get_offset(gbo, 0),
             gbm_bo_get_modifier(gbo));
     if (swapchain->render_buffer == NULL)

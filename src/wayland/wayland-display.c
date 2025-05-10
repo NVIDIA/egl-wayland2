@@ -773,6 +773,32 @@ static void on_wp_presentation_clock_id(void *userdata,
 }
 static struct wp_presentation_listener PRESENTATION_TIME_LISTENER = { on_wp_presentation_clock_id };
 
+static char *InitExtensionString(const char *internal_ext)
+{
+    static const char PRESENT_OPAQUE_NAME[] = "EGL_EXT_present_opaque";
+    size_t len;
+    char *str;
+
+    if (internal_ext == NULL || internal_ext[0] == '\x00')
+    {
+        return strdup(PRESENT_OPAQUE_NAME);
+    }
+    if (eplFindExtension(PRESENT_OPAQUE_NAME, internal_ext))
+    {
+        return strdup(internal_ext);
+    }
+
+    len = strlen(internal_ext);
+    str = malloc(len + 1 + sizeof(PRESENT_OPAQUE_NAME));
+    if (str != NULL)
+    {
+        memcpy(str, internal_ext, len);
+        str[len] = ' ';
+        memcpy(str + len + 1, PRESENT_OPAQUE_NAME, sizeof(PRESENT_OPAQUE_NAME));
+    }
+    return str;
+}
+
 WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_init)
 {
     WlDisplayInstance *inst = NULL;
@@ -1029,6 +1055,13 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
     ext = pdpy->platform->egl.QueryString(inst->internal_display->edpy, EGL_EXTENSIONS);
     inst->supports_EGL_ANDROID_native_fence_sync = eplFindExtension("EGL_ANDROID_native_fence_sync", ext);
 
+    inst->extension_string = InitExtensionString(ext);
+    if (inst->extension_string == NULL)
+    {
+        eplSetError(pdpy->platform, EGL_BAD_ALLOC, "Out of memory");
+        goto done;
+    }
+
     if (inst->supports_EGL_ANDROID_native_fence_sync
             && names.wp_linux_drm_syncobj_manager_v1.name != 0
             && CheckExplicitSyncSupport(pdpy->platform, gbm_device_get_fd(inst->gbmdev)))
@@ -1157,3 +1190,25 @@ static void eplWlDisplayInstanceFree(WlDisplayInstance *inst)
     }
 }
 
+const char *eplWlHookQueryString(EGLDisplay edpy, EGLint name)
+{
+    EplDisplay *pdpy = eplDisplayAcquire(edpy);
+    const char *str = NULL;
+
+    if (pdpy == NULL)
+    {
+        return EGL_FALSE;
+    }
+
+    if (name == EGL_EXTENSIONS)
+    {
+        str = pdpy->priv->inst->extension_string;
+    }
+    if (str == NULL)
+    {
+        str = pdpy->platform->egl.QueryString(pdpy->internal_display, name);
+    }
+
+    eplDisplayRelease(pdpy);
+    return str;
+}

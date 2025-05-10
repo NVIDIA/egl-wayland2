@@ -220,6 +220,10 @@ void *eplWlGetHookFunction(EplPlatformData *plat, const char *name)
     {
         return eplWlHookGetConfigAttrib;
     }
+    else if (strcmp(name, "eglQueryString") == 0)
+    {
+        return eplWlHookQueryString;
+    }
     return NULL;
 }
 

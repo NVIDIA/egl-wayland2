@@ -182,7 +182,7 @@ static EGLBoolean SetupConfig(EplPlatformData *plat,
     const WlDmaBufFormat *server_fmt = NULL;
     EGLint fourcc = DRM_FORMAT_INVALID;
     EGLBoolean supported = EGL_FALSE;
-    EGLint i, j;
+    size_t i, j;
 
     config->surfaceMask &= ~(EGL_WINDOW_BIT | EGL_PIXMAP_BIT);
 

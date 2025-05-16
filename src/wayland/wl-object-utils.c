@@ -62,6 +62,7 @@ EGLBoolean wlEglCheckInterfaceType(struct wl_object *obj, const char *ifname)
 {
     /* The first member of a wl_object is a pointer to its wl_interface, */
     struct wl_interface *interface;
+    size_t len;
 
     if (!wlEglMemoryIsReadable(obj, sizeof(void *)))
     {
@@ -72,7 +73,7 @@ EGLBoolean wlEglCheckInterfaceType(struct wl_object *obj, const char *ifname)
 
     /* Check if the memory for the wl_interface struct, and the
      * interface name, are safe to read. */
-    int len = strlen(ifname);
+    len = strlen(ifname);
     if (!wlEglMemoryIsReadable(interface, sizeof (*interface))
             || !wlEglMemoryIsReadable(interface->name, len + 1))
     {

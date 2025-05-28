@@ -233,7 +233,7 @@ static EGLBoolean SetupConfig(EplPlatformData *plat,
         {
             for (j=0; j<driver_fmt->num_modifiers && !supported; j++)
             {
-                if (server_fmt->modifiers[i] == driver_fmt->modifiers[i])
+                if (server_fmt->modifiers[i] == driver_fmt->modifiers[j])
                 {
                     supported = EGL_TRUE;
                 }

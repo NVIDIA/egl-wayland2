@@ -107,8 +107,8 @@ typedef struct
     /**
      * The size of the buffers.
      */
-    EGLint width;
-    EGLint height;
+    uint32_t width;
+    uint32_t height;
 
     uint32_t render_fourcc;
 

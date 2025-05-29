@@ -34,7 +34,7 @@
 /**
  * The maximum number of color buffers to allocate for a window.
  */
-static const int MAX_PRESENT_BUFFERS = 4;
+static const size_t MAX_PRESENT_BUFFERS = 4;
 
 /**
  * How long to wait for a buffer release before we stop to check for window

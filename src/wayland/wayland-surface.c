@@ -690,7 +690,7 @@ static void WindowUpdateCallback(void *param)
     }
 }
 
-static const uint32_t FindOpaqueFormat(const EplFormatInfo *fmt)
+static uint32_t FindOpaqueFormat(const EplFormatInfo *fmt)
 {
     int i;
 
@@ -1388,9 +1388,12 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
                 uint64_t timestamp = ((uint64_t) swap_interval) * psurf->priv->current.last_present_refresh;
                 if (timestamp >= FRAME_TIMESTAMP_PADDING)
                 {
+                    uint64_t sec;
+                    uint32_t nsec;
+
                     timestamp += psurf->priv->current.last_present_timestamp - FRAME_TIMESTAMP_PADDING;
-                    uint64_t sec = timestamp / 1000000000;
-                    uint32_t nsec = timestamp % 1000000000;
+                    sec = timestamp / 1000000000;
+                    nsec = timestamp % 1000000000;
                     wp_commit_timer_v1_set_timestamp(psurf->priv->current.commit_timer,
                             (uint32_t) (sec >> 32), (uint32_t) sec, nsec);
                 }

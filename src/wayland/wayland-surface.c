@@ -736,6 +736,7 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
     const WlDmaBufFormat *driver_format = NULL;
     EGLSurface internalSurface = EGL_NO_SURFACE;
     EGLAttrib *driverAttribs = NULL;
+    EGLint numAttribs = eplCountAttribs(attribs);
     EGLBoolean presentOpaque = EGL_FALSE;
     EGLAttrib platformAttribs[] =
     {
@@ -785,33 +786,39 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
     driver_format = eplWlDmaBufFormatFind(inst->driver_formats->formats, inst->driver_formats->num_formats, configInfo->fourcc);
     assert(driver_format != NULL);
 
+    driverAttribs = malloc((numAttribs + 3) * sizeof(EGLAttrib));
+    if (driverAttribs == NULL)
+    {
+        eplSetError(plat, EGL_BAD_ALLOC, "Out of memory");
+        goto done;
+    }
+
+    numAttribs = 0;
     if (attribs != NULL && attribs[0] != EGL_NONE)
     {
-        int count = eplCountAttribs(attribs);
         int i;
 
-        driverAttribs = malloc((count + 1) * sizeof(EGLAttrib));
-        if (driverAttribs == NULL)
-        {
-            eplSetError(plat, EGL_BAD_ALLOC, "Out of memory");
-            goto done;
-        }
-
-        count = 0;
         for (i = 0; attribs[i] != EGL_NONE; i += 2)
         {
             if (attribs[i] == EGL_PRESENT_OPAQUE_EXT)
             {
                 presentOpaque = (attribs[i + 1] != 0);
             }
+            else if (attribs[i] == EGL_SURFACE_Y_INVERTED_NVX)
+            {
+                eplSetError(plat, EGL_BAD_ATTRIBUTE, "Invalid attribute 0x%04x\n", attribs[i]);
+                goto done;
+            }
             else
             {
-                driverAttribs[count++] = attribs[i];
-                driverAttribs[count++] = attribs[i + 1];
+                driverAttribs[numAttribs++] = attribs[i];
+                driverAttribs[numAttribs++] = attribs[i + 1];
             }
         }
-        driverAttribs[count] = EGL_NONE;
     }
+    driverAttribs[numAttribs++] = EGL_SURFACE_Y_INVERTED_NVX;
+    driverAttribs[numAttribs++] = EGL_TRUE;
+    driverAttribs[numAttribs] = EGL_NONE;
 
     // Allocate enough space for the EplImplSurface, plus extra to hold a
     // format modifier list.

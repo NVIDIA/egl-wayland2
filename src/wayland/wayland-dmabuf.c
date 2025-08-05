@@ -21,6 +21,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <assert.h>
+#include <unistd.h>
 
 #include <drm_fourcc.h>
 
@@ -106,6 +107,8 @@ void eplWlDmaBufFeedbackCommonFormatTable(void *userdata,
             base->error = EGL_TRUE;
         }
     }
+
+    close(fd);
 }
 
 void eplWlDmaBufFeedbackCommonMainDevice(void *userdata,

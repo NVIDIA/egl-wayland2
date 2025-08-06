@@ -1455,6 +1455,14 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
 
     wl_surface_commit(psurf->priv->current.wsurf);
 
+    pthread_mutex_lock(&psurf->priv->params.mutex);
+    if (psurf->priv->params.native_window != NULL)
+    {
+        psurf->priv->params.native_window->attached_width = psurf->priv->current.swapchain->width;
+        psurf->priv->params.native_window->attached_height = psurf->priv->current.swapchain->height;
+    }
+    pthread_mutex_unlock(&psurf->priv->params.mutex);
+
     /*
      * Send a wl_display::sync request after the commit.
      *

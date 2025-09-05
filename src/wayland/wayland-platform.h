@@ -61,6 +61,7 @@ struct _EplImplPlatform
 
     struct
     {
+        void *libdrmDlHandle;
         int (* GetDeviceFromDevId) (dev_t dev_id, uint32_t flags, drmDevicePtr *device);
         int (* GetCap) (int fd, uint64_t capability, uint64_t *value);
         int (* SyncobjCreate) (int fd, uint32_t flags, uint32_t *handle);

@@ -1409,14 +1409,23 @@ static EGLBoolean HookSetDamageRegion(EGLDisplay edpy, EGLSurface esurf, EGLint 
             goto done;
         }
 
-        /*
-         * Here's where we'd optionally call into the platform-specific code.
-         * Since eglSetDamageRegionKHR is just a hint, it's also valid to just
-         * ignore it.
-         */
+        if (pdpy->platform->impl->SetDamageRegion != NULL)
+        {
+            ret = pdpy->platform->impl->SetDamageRegion(pdpy, psurf, rects, n_rects);
+        }
+        else
+        {
+            /*
+             * eglSetDamageRegionKHR is just a hint, so if the platform doesn't
+             * do anything with it, we can still return success.
+             */
+            ret = EGL_TRUE;
+        }
 
-        psurf->setDamageRegionCalled = EGL_TRUE;
-        ret = EGL_TRUE;
+        if (ret)
+        {
+            psurf->setDamageRegionCalled = EGL_TRUE;
+        }
     }
     else if (pdpy->platform->egl.SetDamageRegionKHR != NULL)
     {

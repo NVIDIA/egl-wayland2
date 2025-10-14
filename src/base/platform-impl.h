@@ -321,6 +321,20 @@ typedef struct _EplImplFuncs
      * \return The buffer age, or -1 on error.
      */
     EGLint (* QueryBufferAge) (EplDisplay *pdpy, EplSurface *psurf);
+
+    /**
+     * Implements eglSetDamageRegionKHR.
+     *
+     * This function is optional. If it's NULL, then the base library will
+     * ignore the damage areas and return success.
+     *
+     * \param pdpy The current display.
+     * \param psurf The current draw surface. This will never be NULL.
+     * \param rects The damage rectangles.
+     * \param n_rects The number of elements in the \p rects array.
+     * \return EGL_TRUE on success, or EGL_FALSE on failure.
+     */
+    EGLBoolean (* SetDamageRegion) (EplDisplay *pdpy, EplSurface *psurf, const EGLint *rects, EGLint n_rects);
 } EplImplFuncs;
 
 #ifdef __cplusplus

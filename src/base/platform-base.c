@@ -135,6 +135,7 @@ EplPlatformData *eplPlatformBaseAllocate(int major, int minor,
     platform->egl.ChooseConfig = driver->getProcAddress("eglChooseConfig");
     platform->egl.GetConfigAttrib = driver->getProcAddress("eglGetConfigAttrib");
     platform->egl.GetConfigs = driver->getProcAddress("eglGetConfigs");
+    platform->egl.QuerySurface = driver->getProcAddress("eglQuerySurface");
     platform->egl.QueryDeviceAttribEXT = driver->getProcAddress("eglQueryDeviceAttribEXT");
     platform->egl.QueryDeviceStringEXT = driver->getProcAddress("eglQueryDeviceStringEXT");
     platform->egl.QueryDevicesEXT = driver->getProcAddress("eglQueryDevicesEXT");
@@ -164,6 +165,7 @@ EplPlatformData *eplPlatformBaseAllocate(int major, int minor,
             || platform->egl.ChooseConfig == NULL
             || platform->egl.GetConfigAttrib == NULL
             || platform->egl.GetConfigs == NULL
+            || platform->egl.QuerySurface == NULL
             || platform->egl.QueryDeviceAttribEXT == NULL
             || platform->egl.QueryDeviceStringEXT == NULL
             || platform->egl.QueryDevicesEXT == NULL
@@ -1110,6 +1112,11 @@ static EGLBoolean HookSwapBuffersWithDamage(EGLDisplay edpy, EGLSurface esurf, c
         else
         {
             ret = pdpy->platform->impl->SwapBuffers(pdpy->platform, pdpy, psurf, rects, n_rects);
+            if (ret)
+            {
+                psurf->setDamageRegionCalled = EGL_FALSE;
+                psurf->bufferAgeCalled = EGL_FALSE;
+            }
         }
 
         eplHookDisplaySurfaceEnd(pdpy, psurf);
@@ -1295,6 +1302,124 @@ static EGLBoolean HookSwapInterval(EGLDisplay edpy, EGLint interval)
     return ret;
 }
 
+static EGLBoolean HookQuerySurface(EGLDisplay edpy, EGLSurface esurf, EGLint attribute, EGLint *value)
+{
+    EplDisplay *pdpy;
+    EplSurface *psurf;
+    EGLBoolean ret = EGL_FALSE;
+
+    if (!eplHookDisplaySurface(edpy, esurf, &pdpy, &psurf))
+    {
+        return EGL_FALSE;
+    }
+
+    if (value == NULL)
+    {
+        eplSetError(pdpy->platform, EGL_BAD_PARAMETER, "value pointer must not be NULL");
+        goto done;
+    }
+
+    if (psurf != NULL)
+    {
+        if (attribute == EGL_BUFFER_AGE_KHR)
+        {
+            if (pdpy->platform->egl.GetCurrentSurface(EGL_DRAW) != esurf)
+            {
+                eplSetError(pdpy->platform, EGL_BAD_SURFACE, "EGLSurface %p is not current", esurf);
+                goto done;
+            }
+
+            // Note: This is where we'll call into the platform-specific code
+            // once we add a query function to EplImplFuncs. Until then,
+            // returning zero is valid (if not very useful).
+            *value = 0;
+
+            psurf->bufferAgeCalled = EGL_TRUE;
+            ret = EGL_TRUE;
+        }
+        else
+        {
+            // If it's not an attribute that we recognize, then pass the query
+            // through to the driver.
+            ret = pdpy->platform->egl.QuerySurface(pdpy->internal_display,
+                    psurf->internal_surface, attribute, value);
+        }
+    }
+    else
+    {
+        // If it's not an EGLSurface that we recognize, then pass the query
+        // through to the driver.
+        ret = pdpy->platform->egl.QuerySurface(pdpy->internal_display,
+                esurf, attribute, value);
+    }
+
+done:
+    eplHookDisplaySurfaceEnd(pdpy, psurf);
+    return ret;
+}
+
+static EGLBoolean HookSetDamageRegion(EGLDisplay edpy, EGLSurface esurf, EGLint *rects, EGLint n_rects)
+{
+    EplDisplay *pdpy;
+    EplSurface *psurf;
+    EGLBoolean ret = EGL_FALSE;
+
+    if (!eplHookDisplaySurface(edpy, esurf, &pdpy, &psurf))
+    {
+        return EGL_FALSE;
+    }
+
+    if (psurf != NULL)
+    {
+        if (psurf->type != EPL_SURFACE_TYPE_WINDOW)
+        {
+            eplSetError(pdpy->platform, EGL_BAD_MATCH, "EGLSurface %p is not a postable surface", esurf);
+            goto done;
+        }
+        if (pdpy->platform->egl.GetCurrentSurface(EGL_DRAW) != esurf)
+        {
+            eplSetError(pdpy->platform, EGL_BAD_MATCH, "EGLSurface %p is not current", esurf);
+            goto done;
+        }
+        if (!psurf->bufferAgeCalled)
+        {
+            eplSetError(pdpy->platform, EGL_BAD_ACCESS,
+                    "EGL_BUFFER_AGE_KHR must be queried before calling eglSetDamageRegionKHR");
+            goto done;
+        }
+        if (psurf->setDamageRegionCalled)
+        {
+            eplSetError(pdpy->platform, EGL_BAD_ACCESS,
+                    "eglSetDamageRegionKHR has already been called this frame");
+            goto done;
+        }
+
+        /*
+         * Here's where we'd optionally call into the platform-specific code.
+         * Since eglSetDamageRegionKHR is just a hint, it's also valid to just
+         * ignore it.
+         */
+
+        psurf->setDamageRegionCalled = EGL_TRUE;
+        ret = EGL_TRUE;
+    }
+    else if (pdpy->platform->egl.SetDamageRegionKHR != NULL)
+    {
+        // We don't recgonize this EGLSurface, so pass it through to the driver.
+        ret = pdpy->platform->egl.SetDamageRegionKHR(pdpy->internal_display, esurf, rects, n_rects);
+    }
+    else
+    {
+        // If the driver doesn't support eglSetDamageRegionKHR, then just
+        // ignore it and return success.
+        ret = EGL_TRUE;
+    }
+
+done:
+    eplHookDisplaySurfaceEnd(pdpy, psurf);
+    return ret;
+}
+
 static const EplHookFunc BASE_HOOK_FUNCTIONS[] =
 {
     { "eglCreatePbufferSurface", HookCreatePbufferSurface },
@@ -1307,6 +1432,8 @@ static const EplHookFunc BASE_HOOK_FUNCTIONS[] =
     { "eglQueryDisplayAttribEXT", HookQueryDisplayAttrib },
     { "eglQueryDisplayAttribKHR", HookQueryDisplayAttrib },
     { "eglQueryDisplayAttribNV", HookQueryDisplayAttrib },
+    { "eglQuerySurface", HookQuerySurface },
+    { "eglSetDamageRegionKHR", HookSetDamageRegion },
     { "eglSwapBuffers", HookSwapBuffers },
     { "eglSwapBuffersWithDamageEXT", HookSwapBuffersWithDamage },
     { "eglSwapBuffersWithDamageKHR", HookSwapBuffersWithDamage },

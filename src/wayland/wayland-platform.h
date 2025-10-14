@@ -140,4 +140,6 @@ EGLBoolean eplWlSwapInterval(EplDisplay *pdpy, EplSurface *psurf, EGLint interva
 
 EGLBoolean eplWlWaitGL(EplDisplay *pdpy, EplSurface *psurf);
 
+EGLint eplWlQueryBufferAge(EplDisplay *pdpy, EplSurface *psurf);
+
 #endif // WAYLAND_PLATFORM_H

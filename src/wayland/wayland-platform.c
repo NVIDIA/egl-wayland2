@@ -60,6 +60,7 @@ static const EplImplFuncs WL_IMPL_FUNCS =
     .SwapBuffers = eplWlSwapBuffers,
     .WaitGL = eplWlWaitGL,
     .SwapInterval = eplWlSwapInterval,
+    .QueryBufferAge = eplWlQueryBufferAge,
 };
 
 static EGLBoolean LoadProcHelper(EplPlatformData *plat, void *handle, void **ptr, const char *name)

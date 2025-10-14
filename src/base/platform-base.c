@@ -1329,10 +1329,25 @@ static EGLBoolean HookQuerySurface(EGLDisplay edpy, EGLSurface esurf, EGLint att
                 goto done;
             }
 
-            // Note: This is where we'll call into the platform-specific code
-            // once we add a query function to EplImplFuncs. Until then,
-            // returning zero is valid (if not very useful).
-            *value = 0;
+            if (pdpy->platform->impl->QueryBufferAge != NULL)
+            {
+                EGLint age = pdpy->platform->impl->QueryBufferAge(pdpy, psurf);
+                if (age < 0)
+                {
+                    goto done;
+                }
+
+                *value = age;
+            }
+            else
+            {
+                /*
+                 * If the platform code doesn't implement this, then just return
+                 * zero. That's always valid, and means that the application can't
+                 * make any assumptions about the buffer's contents.
+                 */
+                *value = 0;
+            }
 
             psurf->bufferAgeCalled = EGL_TRUE;
             ret = EGL_TRUE;

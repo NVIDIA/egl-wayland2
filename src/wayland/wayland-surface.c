@@ -855,7 +855,6 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
     else
     {
         priv->current.queue = wl_display_create_queue(inst->wdpy);
-        abort();
     }
     if (priv->current.queue == NULL)
     {

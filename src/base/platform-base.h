@@ -88,6 +88,17 @@ typedef struct
      */
     EplImplSurface *priv;
 
+    /**
+     * True if eglSetDamageRegionKHR has been called since the last
+     * eglSwapBuffers.
+     */
+    EGLBoolean setDamageRegionCalled;
+
+    /**
+     * True EGL_BUFFER_AGE has been queried since the last eglSwapBuffers.
+     */
+    EGLBoolean bufferAgeCalled;
+
     struct glvnd_list entry;
 } EplSurface;
 
@@ -218,6 +229,7 @@ typedef struct _EplPlatformData
         PFNEGLWAITCLIENTPROC WaitClient;
         PFNEGLWAITNATIVEPROC WaitNative;
         PFNEGLSWAPINTERVALPROC SwapInterval;
+        PFNEGLQUERYSURFACEPROC QuerySurface;
 
         PFNEGLQUERYDEVICEATTRIBEXTPROC QueryDeviceAttribEXT;
         PFNEGLQUERYDEVICESTRINGEXTPROC QueryDeviceStringEXT;
@@ -226,6 +238,8 @@ typedef struct _EplPlatformData
 
         PFNEGLSWAPBUFFERSWITHDAMAGEKHRPROC SwapBuffersWithDamage;
         PFNEGLCREATESTREAMPRODUCERSURFACEKHRPROC CreateStreamProducerSurfaceKHR;
+
+        PFNEGLSETDAMAGEREGIONKHRPROC SetDamageRegionKHR;
     } egl;
 
     struct

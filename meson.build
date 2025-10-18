@@ -14,7 +14,7 @@
 # limitations under the License.
 
 project('nvidia-egl-wayland2', 'c',
-  version : '1.0.0',
+  version : '1.0.1',
   default_options : ['c_std=gnu99'],
 )
 

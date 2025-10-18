@@ -797,3 +797,27 @@ WlPresentBuffer *eplWlSwapChainFindFreePresentBuffer(WlDisplayInstance *inst,
         }
     }
 }
+
+void eplWlSwapChainUpdateBufferAge(WlDisplayInstance *inst, WlSwapChain *swapchain,
+        WlPresentBuffer *presented_buffer)
+{
+    WlPresentBuffer *buf = NULL;
+
+    if (swapchain->prime)
+    {
+        return;
+    }
+
+    glvnd_list_for_each_entry(buf, &swapchain->present_buffers, entry)
+    {
+        if (buf != presented_buffer)
+        {
+            if (buf->buffer_age != 0)
+            {
+                buf->buffer_age++;
+            }
+        }
+    }
+
+    presented_buffer->buffer_age = 1;
+}

@@ -1518,6 +1518,9 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
 
         psurf->priv->current.swapchain->current_back = next_back;
         psurf->priv->current.swapchain->render_buffer = next_back->buffer;
+
+        eplWlSwapChainUpdateBufferAge(inst, psurf->priv->current.swapchain, present_buf);
+
     }
 
     // Note that for PRIME, since we don't have a front buffer at all, so we
@@ -1585,4 +1588,16 @@ EGLBoolean eplWlWaitGL(EplDisplay *pdpy, EplSurface *psurf)
     }
 
     return ret;
+}
+
+EGLint eplWlQueryBufferAge(EplDisplay *pdpy, EplSurface *psurf)
+{
+    if (psurf->priv->current.swapchain->prime)
+    {
+        return 0;
+    }
+    else
+    {
+        return psurf->priv->current.swapchain->current_back->buffer_age;
+    }
 }

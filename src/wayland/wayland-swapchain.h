@@ -73,6 +73,15 @@ typedef struct
     WlBufferStatus status;
 
     /**
+     * The value of the EGL_BUFFER_AGE_KHR attribute when this is the current
+     * back buffer.
+     *
+     * Note that with PRIME, this will never be the current back buffer, so it
+     * will always be zero.
+     */
+    EGLint buffer_age;
+
+    /**
      * The wl_buffer object for this buffer.
      */
     struct wl_buffer *wbuf;
@@ -199,5 +208,15 @@ WlPresentBuffer *eplWlSwapChainCreatePresentBuffer(WlDisplayInstance *inst,
  */
 WlPresentBuffer *eplWlSwapChainFindFreePresentBuffer(WlDisplayInstance *inst,
         WlSwapChain *swapchain);
+
+/**
+ * Updates the buffer age counters for each buffer.
+ *
+ * \param inst The WlDisplayInstance for the display
+ * \param swapchain The swapchain to update
+ * \param presented_buffer The buffer that we just presented.
+ */
+void eplWlSwapChainUpdateBufferAge(WlDisplayInstance *inst, WlSwapChain *swapchain,
+        WlPresentBuffer *presented_buffer);
 
 #endif // WAYLAND_SWAPCHAIN_H

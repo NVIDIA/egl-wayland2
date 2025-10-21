@@ -450,7 +450,8 @@ static EGLBoolean CreateSurfaceFeedback(EplSurface *psurf)
     SurfaceFeedbackState *state;
     struct zwp_linux_dmabuf_v1 *wrapper = NULL;
 
-    if (inst->force_prime || wl_proxy_get_version((struct wl_proxy *) inst->globals.dmabuf) < 4)
+    if (inst->force_prime || wl_proxy_get_version((struct wl_proxy *) inst->globals.dmabuf)
+            < ZWP_LINUX_DMABUF_V1_GET_SURFACE_FEEDBACK_SINCE_VERSION)
     {
         return EGL_TRUE;
     }
@@ -1349,7 +1350,8 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
     assert(psurf->priv->current.last_swap_sync == NULL);
 
     if (rects != NULL && n_rects > 0
-            && wl_proxy_get_version((struct wl_proxy *) psurf->priv->current.wsurf) >= 3)
+            && wl_proxy_get_version((struct wl_proxy *) psurf->priv->current.wsurf)
+                >= WL_SURFACE_DAMAGE_BUFFER_SINCE_VERSION)
     {
         EGLint i;
         for (i=0; i<n_rects; i++)

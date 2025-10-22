@@ -383,7 +383,8 @@ EGLBoolean GetDefaultFeedbackV4(DefaultFeedbackState *state,
 
     glvnd_list_init(&state->tranches);
 
-    assert(wl_proxy_get_version((struct wl_proxy *) wdmabuf) >= 4);
+    assert(wl_proxy_get_version((struct wl_proxy *) wdmabuf)
+            >= ZWP_LINUX_DMABUF_V1_GET_DEFAULT_FEEDBACK_SINCE_VERSION);
 
     queue = wl_display_create_queue(wdpy);
     if (queue == NULL)
@@ -500,11 +501,11 @@ WlFormatList *eplWlDmaBufFeedbackGetDefault(struct wl_display *wdpy,
     glvnd_list_init(&state.tranches);
     wl_array_init(&state.tranche_formats);
 
-    if (version >= 4)
+    if (version >= ZWP_LINUX_DMABUF_V1_GET_DEFAULT_FEEDBACK_SINCE_VERSION)
     {
         success = GetDefaultFeedbackV4(&state, wdpy, wdmabuf);
     }
-    else if (version >= 3)
+    else if (version >= ZWP_LINUX_DMABUF_V1_MODIFIER_SINCE_VERSION)
     {
         success = GetDefaultFeedbackV3(&state, wdpy, wdmabuf, queue);
     }

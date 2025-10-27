@@ -41,6 +41,7 @@ const EplFormatInfo FORMAT_INFO_LIST[] =
     { DRM_FORMAT_RG1616, 32, { 16, 16, 0, 0 }, { 16, 0, 0, 0 } },
     { DRM_FORMAT_ARGB2101010, 32, { 10, 10, 10, 2 }, { 20, 10, 0, 30 } },
     { DRM_FORMAT_ABGR2101010, 32, { 10, 10, 10, 2 }, { 0, 10, 20, 30 } },
+    { DRM_FORMAT_ABGR16161616F, 64, { 16, 16, 16, 16 }, {  0, 16, 32, 48 } },
 
     /* 8 bpp RGB */
     { DRM_FORMAT_RGB332, 8, { 3, 3, 2, 0 }, { 5, 2, 0, 0 } },

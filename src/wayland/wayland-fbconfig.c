@@ -197,6 +197,22 @@ static EGLBoolean SetupConfig(EplPlatformData *plat,
         config->fourcc = DRM_FORMAT_INVALID;
     }
 
+    if (!EGL_PLATFORM_SURFACE_INTERFACE_CHECK_VERSION(plat->priv->egl.platform_surface_version,
+                EGL_PLATFORM_SURFACE_INTERNAL_SWAP_SINCE))
+    {
+        // Multisampled surfaces require additional driver support which was
+        // added in interface version 0.2.
+        EGLint msaa = 0;
+        if (plat->priv->egl.PlatformGetConfigAttribNVX(internal_display,
+                    config->config, EGL_SAMPLE_BUFFERS, &msaa))
+        {
+            if (msaa != 0)
+            {
+                return EGL_TRUE;
+            }
+        }
+    }
+
     if (config->fourcc == DRM_FORMAT_INVALID)
     {
         // Without a format, we can't do anything with this config.

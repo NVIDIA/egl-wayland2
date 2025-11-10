@@ -1272,6 +1272,16 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
     psurf->priv->params.skip_update_callback++;
     pthread_mutex_unlock(&psurf->priv->params.mutex);
 
+    if (EGL_PLATFORM_SURFACE_INTERFACE_CHECK_VERSION(plat->priv->egl.platform_surface_version,
+                EGL_PLATFORM_SURFACE_INTERNAL_SWAP_SINCE))
+    {
+        // Call into the driver to do any extra pre-present work.
+        if (!plat->egl.SwapBuffers(inst->internal_display->edpy, psurf->internal_surface))
+        {
+            goto done;
+        }
+    }
+
     // Dispatch any pending events, but don't block for them. This will ensure
     // that we pick up any modifier changes that the server might have sent.
     wl_display_dispatch_queue_pending(psurf->priv->inst->wdpy, psurf->priv->current.queue);

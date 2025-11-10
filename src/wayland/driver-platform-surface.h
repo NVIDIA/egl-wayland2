@@ -56,7 +56,15 @@ extern "C" {
 #define EGL_SURFACE_Y_INVERTED_NVX 0x31DB
 
 #define EGL_PLATFORM_SURFACE_INTERFACE_MAJOR_VERSION 0
-#define EGL_PLATFORM_SURFACE_INTERFACE_MINOR_VERSION 1
+
+/**
+ * Version 0.2 adds the ability to call eglSwapBuffers (or eglSwapBuffersWithDamage)
+ * to perform any internal operations that are necessary before presentation.
+ *
+ * This is used for downsampling or any other internal bookkeeping that the
+ * driver needs.
+ */
+#define EGL_PLATFORM_SURFACE_INTERNAL_SWAP_SINCE 2
 
 static inline EGLint EGL_PLATFORM_SURFACE_INTERFACE_GET_MAJOR_VERSION(EGLint version)
 {
@@ -71,14 +79,13 @@ static inline EGLint EGL_PLATFORM_SURFACE_INTERFACE_GET_MINOR_VERSION(EGLint ver
  * Checks if the version number reported by the driver is compatible.
  *
  * \param driver_version The version number reported by \c eglPlatformGetVersionNVX.
- * \param major_version The major version number that the library expects.
  * \param min_minor_version The minimum minor version number that the library requires.
  * \return EGL_TRUE if the driver's version is compatible.
  */
 static inline EGLBoolean EGL_PLATFORM_SURFACE_INTERFACE_CHECK_VERSION(EGLint driver_version,
-        EGLint major_version, EGLint min_minor_version)
+        EGLint min_minor_version)
 {
-    return EGL_PLATFORM_SURFACE_INTERFACE_GET_MAJOR_VERSION(driver_version) == major_version
+    return EGL_PLATFORM_SURFACE_INTERFACE_GET_MAJOR_VERSION(driver_version) == EGL_PLATFORM_SURFACE_INTERFACE_MAJOR_VERSION
         && EGL_PLATFORM_SURFACE_INTERFACE_GET_MINOR_VERSION(driver_version) >= min_minor_version;
 }
 

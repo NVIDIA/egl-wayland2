@@ -57,6 +57,8 @@ struct _EplImplPlatform
         pfn_eglPlatformCopyColorBufferNVX PlatformCopyColorBufferNVX;
         pfn_eglPlatformAllocColorBufferNVX PlatformAllocColorBufferNVX;
         pfn_eglPlatformExportColorBufferNVX PlatformExportColorBufferNVX;
+
+        EGLint platform_surface_version;
     } egl;
 
     struct

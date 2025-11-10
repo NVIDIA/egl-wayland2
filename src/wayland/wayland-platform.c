@@ -28,7 +28,6 @@
 #include "platform-utils.h"
 #include "dma-buf.h"
 
-static const EGLint NEED_PLATFORM_SURFACE_MAJOR = 0;
 static const EGLint NEED_PLATFORM_SURFACE_MINOR = 1;
 
 static void eplWlCleanupPlatform(EplPlatformData *plat);
@@ -100,13 +99,18 @@ PUBLIC EGLBoolean loadEGLExternalPlatform(int major, int minor,
         return EGL_FALSE;
     }
 
+    // Check that the driver supports a compatible version of the platform
+    // surface interface.
     ptr_eglPlatformGetVersionNVX = driver->getProcAddress("eglPlatformGetVersionNVX");
-    if (ptr_eglPlatformGetVersionNVX == NULL
-            || !EGL_PLATFORM_SURFACE_INTERFACE_CHECK_VERSION(ptr_eglPlatformGetVersionNVX(),
-                NEED_PLATFORM_SURFACE_MAJOR, NEED_PLATFORM_SURFACE_MINOR))
+    if (ptr_eglPlatformGetVersionNVX == NULL)
     {
-        // The driver doesn't support a compatible version of the platform
-        // surface interface.
+        eplPlatformBaseInitFail(plat);
+        return EGL_FALSE;
+    }
+    plat->priv->egl.platform_surface_version = ptr_eglPlatformGetVersionNVX();
+    if (!EGL_PLATFORM_SURFACE_INTERFACE_CHECK_VERSION(plat->priv->egl.platform_surface_version,
+                NEED_PLATFORM_SURFACE_MINOR))
+    {
         eplPlatformBaseInitFail(plat);
         return EGL_FALSE;
     }

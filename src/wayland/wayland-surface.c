@@ -1357,8 +1357,11 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
         for (i=0; i<n_rects; i++)
         {
             const EGLint *rect = rects + (i * 4);
+            // Coordinate systems are flipped between eglSwapBuffersWithDamage
+            // and wl_surface_damage_buffer, so invert Y values.
+            int inv_y = psurf->priv->current.swapchain->height - (rect[1] + rect[3]);
             wl_surface_damage_buffer(psurf->priv->current.wsurf,
-                    rect[0], rect[1], rect[2], rect[3]);
+                    rect[0], inv_y, rect[2], rect[3]);
         }
     }
     else

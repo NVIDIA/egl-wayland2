@@ -810,6 +810,25 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
                 eplSetError(plat, EGL_BAD_ATTRIBUTE, "Invalid attribute 0x%04x\n", attribs[i]);
                 goto done;
             }
+            else if (attribs[i] == EGL_RENDER_BUFFER)
+            {
+                if (attribs[i + 1] == EGL_SINGLE_BUFFER)
+                {
+                    /*
+                     * Wayland doesn't allow front-buffered rendering, but this
+                     * attribute is only a hint. So, issue a warning, but don't
+                     * treat it as an error.
+                     */
+                    plat->callbacks.debugMessage(EGL_DEBUG_MSG_WARN_KHR,
+                            "EGL_SINGLE_BUFFER requested, but Wayland does not support front-buffered rendering");
+                }
+                else if (attribs[i + 1] != EGL_BACK_BUFFER)
+                {
+                    eplSetError(plat, EGL_BAD_ATTRIBUTE,
+                            "Invalid EGL_RENDER_BUFFER value 0x%04x", attribs[i + 1]);
+                    goto done;
+                }
+            }
             else
             {
                 driverAttribs[numAttribs++] = attribs[i];

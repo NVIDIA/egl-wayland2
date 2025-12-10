@@ -88,9 +88,12 @@ typedef struct
     EGLBoolean tranche_linear_supported;
 
     /**
-     * True if we've received new feedback data.
+     * A counter that we increment when we get a new round of feedback events.
+     *
+     * We record this counter in WlSwapChain to keep track of whether we need
+     * to reallocate the swapchain with a different modifier.
      */
-    EGLBoolean modifiers_changed;
+    uint32_t feedback_update_count;
 } SurfaceFeedbackState;
 
 struct _EplImplSurface
@@ -429,7 +432,7 @@ static void OnSurfaceFeedbackDone(void *userdata,
 
     state->linear_supported = EGL_FALSE;
     state->tranche_linear_supported = EGL_FALSE;
-    state->modifiers_changed = EGL_TRUE;
+    state->feedback_update_count++;
     eplWlDmaBufFeedbackCommonDone(&state->base);
 }
 
@@ -559,7 +562,8 @@ static EGLBoolean SwapChainRealloc(EplSurface *psurf,
     }
     else if (allow_modifier_realloc
             && psurf->priv->current.feedback != NULL
-            && psurf->priv->current.feedback->modifiers_changed)
+            && psurf->priv->current.feedback->feedback_update_count
+                != psurf->priv->current.swapchain->feedback_update_count)
     {
         if (psurf->priv->current.swapchain->prime)
         {
@@ -571,17 +575,27 @@ static EGLBoolean SwapChainRealloc(EplSurface *psurf,
         }
         else
         {
+            // We might need to transition from direct to either prime or
+            // direct with different modifiers.
             size_t i;
             needs_new = EGL_TRUE;
             for (i=0; i<psurf->priv->current.num_surface_modifiers; i++)
             {
                 if (psurf->priv->current.swapchain->modifier == psurf->priv->current.surface_modifiers[i])
                 {
-                    // Transition from direct to either prime or direct with different modifiers
+                    // The current modifier is still valid.
                     needs_new = EGL_FALSE;
                     break;
                 }
             }
+        }
+
+        if (!needs_new)
+        {
+            // If the current modifier is still valid, then record the current
+            // feedback count so that we know not to check again next frame.
+            psurf->priv->current.swapchain->feedback_update_count =
+                psurf->priv->current.feedback->feedback_update_count;
         }
     }
 
@@ -603,6 +617,13 @@ static EGLBoolean SwapChainRealloc(EplSurface *psurf,
         if (swapchain == NULL)
         {
             goto done;
+        }
+        if (psurf->priv->current.feedback != NULL)
+        {
+            // Record the current feedback update count. In SwapChainRealloc,
+            // we'll use this to check if we need to reallocate the swapchain
+            // with different modifiers.
+            swapchain->feedback_update_count = psurf->priv->current.feedback->feedback_update_count;
         }
     }
 

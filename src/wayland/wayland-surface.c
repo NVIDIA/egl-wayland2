@@ -1348,7 +1348,7 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
     {
         if (!WaitForPreviousFrames(psurf))
         {
-            return EGL_FALSE;
+            goto done;
         }
     }
     else

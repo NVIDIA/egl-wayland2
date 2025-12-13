@@ -175,6 +175,8 @@ typedef struct
      * An event queue used internally by the swap chain itself.
      */
     struct wl_event_queue *queue;
+
+    uint32_t feedback_update_count;
 } WlSwapChain;
 
 /**

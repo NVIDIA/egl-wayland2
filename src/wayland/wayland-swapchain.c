@@ -46,7 +46,7 @@ static void DestroyPresentBuffer(WlDisplayInstance *inst, WlPresentBuffer *buffe
 {
     if (buffer != NULL)
     {
-        if (buffer->wbuf != NULL)
+        if (buffer->wbuf != NULL && eplWlDisplayInstanceIsNativeValid(inst))
         {
             wl_buffer_destroy(buffer->wbuf);
         }
@@ -298,7 +298,7 @@ void eplWlSwapChainDestroy(WlDisplayInstance *inst, WlSwapChain *swapchain)
             DestroyPresentBuffer(inst, buffer);
         }
 
-        if (swapchain->queue != NULL)
+        if (swapchain->queue != NULL && eplWlDisplayInstanceIsNativeValid(inst))
         {
             wl_event_queue_destroy(swapchain->queue);
         }

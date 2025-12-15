@@ -180,4 +180,14 @@ void eplWlTerminateDisplay(EplPlatformData *plat, EplDisplay *pdpy);
 
 const char *eplWlHookQueryString(EGLDisplay edpy, EGLint name);
 
+/**
+ * Returns true if the native display is still expected to be valid.
+ *
+ * This will return false during teardown for an application-owned wl_display.
+ * Some applications will call wl_display_disconnect but not eglTerminate
+ * before they terminate, in which trying to do anything with the wl_display
+ * could cause a crash or hang.
+ */
+EGLBoolean eplWlDisplayInstanceIsNativeValid(WlDisplayInstance *inst);
+
 #endif // WAYLAND_DISPLAY_H

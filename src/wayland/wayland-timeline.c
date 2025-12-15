@@ -82,7 +82,10 @@ void eplWlTimelineDestroy(WlDisplayInstance *inst, WlTimeline *timeline)
 {
     if (timeline->wtimeline != NULL)
     {
-        wp_linux_drm_syncobj_timeline_v1_destroy(timeline->wtimeline);
+        if (eplWlDisplayInstanceIsNativeValid(inst))
+        {
+            wp_linux_drm_syncobj_timeline_v1_destroy(timeline->wtimeline);
+        }
 
         inst->platform->priv->drm.SyncobjDestroy(
                 gbm_device_get_fd(inst->gbmdev),

@@ -1153,13 +1153,21 @@ static void eplWlDisplayInstanceFree(WlDisplayInstance *inst)
             eplInternalDisplayUnref(inst->internal_display);
         }
 
-        if (inst->globals.dmabuf != NULL)
+        /*
+         * If we're going through teardown, then the application may have
+         * already called wl_display_disconnect, so we can't safely touch
+         * the wl_display or any proxies or queues.
+         */
+        if (eplWlDisplayInstanceIsNativeValid(inst))
         {
-            zwp_linux_dmabuf_v1_destroy(inst->globals.dmabuf);
-        }
-        if (inst->globals.syncobj != NULL)
-        {
-            wp_linux_drm_syncobj_manager_v1_destroy(inst->globals.syncobj);
+            if (inst->globals.dmabuf != NULL)
+            {
+                zwp_linux_dmabuf_v1_destroy(inst->globals.dmabuf);
+            }
+            if (inst->globals.syncobj != NULL)
+            {
+                wp_linux_drm_syncobj_manager_v1_destroy(inst->globals.syncobj);
+            }
         }
 
         if (inst->own_display && inst->wdpy != NULL)
@@ -1211,4 +1219,9 @@ const char *eplWlHookQueryString(EGLDisplay edpy, EGLint name)
 
     eplDisplayRelease(pdpy);
     return str;
+}
+
+EGLBoolean eplWlDisplayInstanceIsNativeValid(WlDisplayInstance *inst)
+{
+    return inst != NULL && (!inst->platform->destroyed || inst->own_display);
 }

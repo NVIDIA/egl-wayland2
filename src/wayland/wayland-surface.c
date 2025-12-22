@@ -509,7 +509,8 @@ static void DestroySurfaceFeedback(EplSurface *psurf)
 {
     if (psurf->priv->current.feedback != NULL)
     {
-        if (psurf->priv->current.feedback->feedback != NULL)
+        if (psurf->priv->current.feedback->feedback != NULL
+                && eplWlDisplayInstanceIsNativeValid(psurf->priv->inst))
         {
             zwp_linux_dmabuf_feedback_v1_destroy(psurf->priv->current.feedback->feedback);
         }
@@ -1069,11 +1070,6 @@ void eplWlDestroyWindow(EplDisplay *pdpy, EplSurface *psurf,
         psurf->internal_surface = EGL_NO_SURFACE;
     }
 
-    if (psurf->priv->current.wsurf != NULL)
-    {
-        wl_proxy_wrapper_destroy(psurf->priv->current.wsurf);
-    }
-
     if (psurf->priv->params.native_window != NULL)
     {
         psurf->priv->params.native_window->resize_callback = NULL;
@@ -1091,37 +1087,44 @@ void eplWlDestroyWindow(EplDisplay *pdpy, EplSurface *psurf,
 
     DestroySurfaceFeedback(psurf);
 
-    if (psurf->priv->current.syncobj != NULL)
+    if (eplWlDisplayInstanceIsNativeValid(pdpy->priv->inst))
     {
-        wp_linux_drm_syncobj_surface_v1_destroy(psurf->priv->current.syncobj);
-    }
-    if (psurf->priv->current.frame_callback != NULL)
-    {
-        wl_callback_destroy(psurf->priv->current.frame_callback);
-    }
-    if (psurf->priv->current.last_swap_sync != NULL)
-    {
-        wl_callback_destroy(psurf->priv->current.last_swap_sync);
-    }
-    if (psurf->priv->current.presentation_feedback != NULL)
-    {
-        wp_presentation_feedback_destroy(psurf->priv->current.presentation_feedback);
-    }
-    if (psurf->priv->current.fifo != NULL)
-    {
-        wp_fifo_v1_destroy(psurf->priv->current.fifo);
-    }
-    if (psurf->priv->current.commit_timer != NULL)
-    {
-        wp_commit_timer_v1_destroy(psurf->priv->current.commit_timer);
-    }
-    if (psurf->priv->current.presentation_time != NULL)
-    {
-        wl_proxy_wrapper_destroy(psurf->priv->current.presentation_time);
-    }
-    if (psurf->priv->current.queue != NULL)
-    {
-        wl_event_queue_destroy(psurf->priv->current.queue);
+        if (psurf->priv->current.wsurf != NULL)
+        {
+            wl_proxy_wrapper_destroy(psurf->priv->current.wsurf);
+        }
+        if (psurf->priv->current.syncobj != NULL)
+        {
+            wp_linux_drm_syncobj_surface_v1_destroy(psurf->priv->current.syncobj);
+        }
+        if (psurf->priv->current.frame_callback != NULL)
+        {
+            wl_callback_destroy(psurf->priv->current.frame_callback);
+        }
+        if (psurf->priv->current.last_swap_sync != NULL)
+        {
+            wl_callback_destroy(psurf->priv->current.last_swap_sync);
+        }
+        if (psurf->priv->current.presentation_feedback != NULL)
+        {
+            wp_presentation_feedback_destroy(psurf->priv->current.presentation_feedback);
+        }
+        if (psurf->priv->current.fifo != NULL)
+        {
+            wp_fifo_v1_destroy(psurf->priv->current.fifo);
+        }
+        if (psurf->priv->current.commit_timer != NULL)
+        {
+            wp_commit_timer_v1_destroy(psurf->priv->current.commit_timer);
+        }
+        if (psurf->priv->current.presentation_time != NULL)
+        {
+            wl_proxy_wrapper_destroy(psurf->priv->current.presentation_time);
+        }
+        if (psurf->priv->current.queue != NULL)
+        {
+            wl_event_queue_destroy(psurf->priv->current.queue);
+        }
     }
 
     pthread_mutex_destroy(&psurf->priv->params.mutex);

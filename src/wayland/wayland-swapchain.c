@@ -705,7 +705,7 @@ static int CheckBufferReleaseImplicit(WlDisplayInstance *inst,
         }
         return count;
     }
-    else if (ret == 0 || errno == ETIME || errno == EINTR)
+    else if (ret == 0 || errno == EINTR)
     {
         // Nothing freed up before the timeout, but that's not a fatal error
         // here.

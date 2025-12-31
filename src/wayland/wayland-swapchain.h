@@ -32,6 +32,11 @@
 #include "wayland-platform.h"
 #include "wayland-timeline.h"
 
+// FreeBSD doesn't have ETIME, so the DRM calls return ETIMEDOUT instead.
+#ifndef ETIME
+#define ETIME ETIMEDOUT
+#endif
+
 typedef enum
 {
     /**

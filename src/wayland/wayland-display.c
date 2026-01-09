@@ -1127,7 +1127,10 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
 
 done:
     FreeDisplayRegistry(&names);
-    wl_event_queue_destroy(queue);
+    if (queue != NULL)
+    {
+        wl_event_queue_destroy(queue);
+    }
     free(drmNode);
     if (drmFd >= 0)
     {

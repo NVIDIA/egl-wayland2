@@ -1,8 +1,5 @@
 # Wayland EGL External Platform library, Version 2
 
-> [!warning]
-> This library is still in development.
-
 This is a new implementation of the EGL External Platform Library for Wayland
 (`EGL_KHR_platform_wayland`), using the NVIDIA driver's new platform surface
 interface, which simplifies a lot of the library and improves window resizing.

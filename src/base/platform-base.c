@@ -1233,13 +1233,22 @@ static EGLBoolean HookQueryDisplayAttrib(EGLDisplay edpy, EGLint attribute, EGLA
         *value = (EGLAttrib) pdpy->track_references;
         ret = EGL_TRUE;
     }
-    else if (pdpy->platform->impl->QueryDisplayAttrib != NULL)
-    {
-        ret = pdpy->platform->impl->QueryDisplayAttrib(pdpy, attribute, value);
-    }
     else
     {
-        ret = pdpy->platform->egl.QueryDisplayAttribEXT(pdpy->internal_display, attribute, value);
+        EplQueryResult result = EPL_QUERY_RESULT_UNKNOWN;
+        if (pdpy->platform->impl->QueryDisplayAttrib != NULL)
+        {
+            result = pdpy->platform->impl->QueryDisplayAttrib(pdpy, attribute, value);
+        }
+
+        if (result == EPL_QUERY_RESULT_UNKNOWN)
+        {
+            ret = pdpy->platform->egl.QueryDisplayAttribEXT(pdpy->internal_display, attribute, value);
+        }
+        else
+        {
+            ret = (result == EPL_QUERY_RESULT_SUCCESS);
+        }
     }
 
     eplDisplayRelease(pdpy);
@@ -1321,25 +1330,27 @@ static EGLBoolean HookQuerySurface(EGLDisplay edpy, EGLSurface esurf, EGLint att
 
     if (psurf != NULL)
     {
+        EplQueryResult result = EPL_QUERY_RESULT_UNKNOWN;
+
         if (attribute == EGL_BUFFER_AGE_KHR)
         {
+            // Querying EGL_BUFFER_AGE_KHR is only valid for the current
+            // EGLSurface.
             if (pdpy->platform->egl.GetCurrentSurface(EGL_DRAW) != esurf)
             {
                 eplSetError(pdpy->platform, EGL_BAD_SURFACE, "EGLSurface %p is not current", esurf);
                 goto done;
             }
+        }
 
-            if (pdpy->platform->impl->QueryBufferAge != NULL)
-            {
-                EGLint age = pdpy->platform->impl->QueryBufferAge(pdpy, psurf);
-                if (age < 0)
-                {
-                    goto done;
-                }
+        if (pdpy->platform->impl->QuerySurface != NULL)
+        {
+            result = pdpy->platform->impl->QuerySurface(pdpy, psurf, attribute, value);
+        }
 
-                *value = age;
-            }
-            else
+        if (result == EPL_QUERY_RESULT_UNKNOWN)
+        {
+            if (attribute == EGL_BUFFER_AGE_KHR)
             {
                 /*
                  * If the platform code doesn't implement this, then just return
@@ -1347,17 +1358,24 @@ static EGLBoolean HookQuerySurface(EGLDisplay edpy, EGLSurface esurf, EGLint att
                  * make any assumptions about the buffer's contents.
                  */
                 *value = 0;
+                ret = EGL_TRUE;
             }
-
-            psurf->bufferAgeCalled = EGL_TRUE;
-            ret = EGL_TRUE;
+            else
+            {
+                // If it's not an attribute that we recognize, then pass the query
+                // through to the driver.
+                ret = pdpy->platform->egl.QuerySurface(pdpy->internal_display,
+                        psurf->internal_surface, attribute, value);
+            }
         }
         else
         {
-            // If it's not an attribute that we recognize, then pass the query
-            // through to the driver.
-            ret = pdpy->platform->egl.QuerySurface(pdpy->internal_display,
-                    psurf->internal_surface, attribute, value);
+            ret = (result == EPL_QUERY_RESULT_SUCCESS);
+        }
+
+        if (ret && attribute == EGL_BUFFER_AGE_KHR)
+        {
+            psurf->bufferAgeCalled = EGL_TRUE;
         }
     }
     else

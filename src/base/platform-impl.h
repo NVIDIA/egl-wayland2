@@ -36,6 +36,31 @@ extern "C" {
 #endif
 
 /**
+ * This is the return value used for EplImplFuncs::QuerySurface.
+ */
+typedef enum
+{
+    /**
+     * The platform library doesn't recognize the attribute. In this case, the
+     * base library will pass the query through to the driver.
+     */
+    EPL_QUERY_RESULT_UNKNOWN,
+
+    /**
+     * The platform library recognized and returned the attribute.
+     */
+    EPL_QUERY_RESULT_SUCCESS,
+
+    /**
+     * The platform library recognized the attribute, but there was some error
+     * returning the value.
+     *
+     * The platform library should set the EGL error code before returning.
+     */
+    EPL_QUERY_RESULT_ERROR,
+} EplQueryResult;
+
+/**
  * A table of functions for the platform-specific implementation.
  */
 typedef struct _EplImplFuncs
@@ -287,9 +312,9 @@ typedef struct _EplImplFuncs
      * \param pdpy The EplDisplay struct
      * \param attrib The attribute to look up.
      * \param[out] value Returns the value of the attribute.
-     * \return EGL_TRUE on success, EGL_FALSE on failure.
+     * \return An \c EplQueryResult value.
      */
-    EGLBoolean (*QueryDisplayAttrib) (EplDisplay *pdpy, EGLint attrib, EGLAttrib *ret_value);
+    EplQueryResult (*QueryDisplayAttrib) (EplDisplay *pdpy, EGLint attrib, EGLAttrib *ret_value);
 
     /**
      * Implements eglSwapInterval.
@@ -311,16 +336,23 @@ typedef struct _EplImplFuncs
     EGLBoolean (* SwapInterval) (EplDisplay *pdpy, EplSurface *psurf, EGLint interval);
 
     /**
-     * Returns the value of EGL_BUFFER_AGE_KHR.
+     * Implements eglQuerySurface for any platform-specific attributes.
      *
      * This function is optional. If it's NULL, then the base library will just
-     * return zero.
+     * act as if the platform returned EPL_QUERY_RESULT_UNKNOWN.
+     *
+     * Note that the base library handles the error checking for
+     * EGL_EXT_buffer_age and EGL_KHR_partial_update internally. If \p attrib
+     * is \c EGL_BUFFER_AGE_KHR, then the platform can assume that the surface
+     * is current.
      *
      * \param pdpy The current display.
      * \param psurf The current draw surface. This will never be NULL.
-     * \return The buffer age, or -1 on error.
+     * \param attrib The attribute to look up.
+     * \param[out] value Returns the value of the attribute.
+     * \return An \c EplQueryResult value.
      */
-    EGLint (* QueryBufferAge) (EplDisplay *pdpy, EplSurface *psurf);
+    EplQueryResult (* QuerySurface) (EplDisplay *pdpy, EplSurface *psurf, EGLint attrib, EGLint *ret_value);
 
     /**
      * Implements eglSetDamageRegionKHR.

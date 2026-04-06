@@ -1648,14 +1648,22 @@ EGLBoolean eplWlWaitGL(EplDisplay *pdpy, EplSurface *psurf)
     return ret;
 }
 
-EGLint eplWlQueryBufferAge(EplDisplay *pdpy, EplSurface *psurf)
+EplQueryResult eplWlQuerySurface(EplDisplay *pdpy, EplSurface *psurf, EGLint attrib, EGLint *ret_value)
 {
-    if (psurf->priv->current.swapchain->prime)
+    if (attrib == EGL_BUFFER_AGE_KHR)
     {
-        return 0;
+        if (psurf->priv->current.swapchain->prime)
+        {
+            *ret_value = 0;
+        }
+        else
+        {
+            *ret_value = psurf->priv->current.swapchain->current_back->buffer_age;
+        }
+        return EPL_QUERY_RESULT_SUCCESS;
     }
     else
     {
-        return psurf->priv->current.swapchain->current_back->buffer_age;
+        return EPL_QUERY_RESULT_UNKNOWN;
     }
 }

@@ -1268,6 +1268,13 @@ static EGLBoolean HookSwapInterval(EGLDisplay edpy, EGLint interval)
         return EGL_FALSE;
     }
 
+    if (pdpy->platform->egl.GetCurrentContext() == EGL_NO_CONTEXT)
+    {
+        eplSetError(pdpy->platform, EGL_BAD_CONTEXT, "eglSwapInterval called without a current context");
+        eplDisplayRelease(pdpy);
+        return EGL_FALSE;
+    }
+
     if (pdpy->platform->egl.GetCurrentDisplay() == edpy)
     {
         EGLSurface esurf = pdpy->platform->egl.GetCurrentSurface(EGL_DRAW);

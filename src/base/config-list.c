@@ -258,6 +258,14 @@ EplConfig **eplConfigListChooseConfigs(EplPlatformData *platform, EGLDisplay edp
             }
             else if (attribs[i] == EGL_NATIVE_RENDERABLE)
             {
+                if (attribs[i + 1] != EGL_TRUE && attribs[i + 1] != EGL_FALSE
+                        && attribs[i + 1] != EGL_DONT_CARE)
+                {
+                    eplSetError(platform, EGL_BAD_ATTRIBUTE,
+                            "Invalid value 0x%04x for EGL_NATIVE_RENDERABLE", attribs[i + 1]);
+                    goto done;
+                }
+
                 nativeRenderable = attribs[i + 1];
             }
             else if (attribs[i] == EGL_NATIVE_VISUAL_TYPE)

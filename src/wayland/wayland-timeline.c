@@ -106,7 +106,7 @@ int eplWlTimelinePointToSyncFD(WlDisplayInstance *inst, WlTimeline *timeline)
                 gbm_device_get_fd(inst->gbmdev),
                 0, &tempobj) != 0)
     {
-        return EGL_FALSE;
+        return -1;
     }
 
     if (inst->platform->priv->drm.SyncobjTransfer(gbm_device_get_fd(inst->gbmdev),

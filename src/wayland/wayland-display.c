@@ -996,16 +996,14 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
             if (node == NULL)
             {
                 eplSetError(pdpy->platform, EGL_BAD_ACCESS, "Driver error: Can't find device node");
-                eplWlDisplayInstanceUnref(inst);
-                return NULL;
+                goto done;
             }
 
             drmFd = open(node, O_RDWR);
             if (drmFd < 0)
             {
                 eplSetError(pdpy->platform, EGL_BAD_ACCESS, "Can't open device node %s: %s", node, strerror(errno));
-                eplWlDisplayInstanceUnref(inst);
-                return NULL;
+                goto done;
             }
         }
 

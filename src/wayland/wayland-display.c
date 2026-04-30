@@ -996,16 +996,14 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
             if (node == NULL)
             {
                 eplSetError(pdpy->platform, EGL_BAD_ACCESS, "Driver error: Can't find device node");
-                eplWlDisplayInstanceUnref(inst);
-                return NULL;
+                goto done;
             }
 
             drmFd = open(node, O_RDWR);
             if (drmFd < 0)
             {
                 eplSetError(pdpy->platform, EGL_BAD_ACCESS, "Can't open device node %s: %s", node, strerror(errno));
-                eplWlDisplayInstanceUnref(inst);
-                return NULL;
+                goto done;
             }
         }
 
@@ -1163,13 +1161,25 @@ static void eplWlDisplayInstanceFree(WlDisplayInstance *inst)
          */
         if (eplWlDisplayInstanceIsNativeValid(inst))
         {
-            if (inst->globals.dmabuf != NULL)
+            if (inst->globals.commit_timing != NULL)
             {
-                zwp_linux_dmabuf_v1_destroy(inst->globals.dmabuf);
+                wp_commit_timing_manager_v1_destroy(inst->globals.commit_timing);
+            }
+            if (inst->globals.fifo != NULL)
+            {
+                wp_fifo_manager_v1_destroy(inst->globals.fifo);
+            }
+            if (inst->globals.presentation_time != NULL)
+            {
+                wp_presentation_destroy(inst->globals.presentation_time);
             }
             if (inst->globals.syncobj != NULL)
             {
                 wp_linux_drm_syncobj_manager_v1_destroy(inst->globals.syncobj);
+            }
+            if (inst->globals.dmabuf != NULL)
+            {
+                zwp_linux_dmabuf_v1_destroy(inst->globals.dmabuf);
             }
         }
 
@@ -1191,6 +1201,7 @@ static void eplWlDisplayInstanceFree(WlDisplayInstance *inst)
         eplWlFormatListFree(inst->default_feedback);
         eplWlFormatListFree(inst->driver_formats);
         eplConfigListFree(inst->configs);
+        free(inst->extension_string);
 
         if (inst->platform != NULL)
         {

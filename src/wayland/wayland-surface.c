@@ -1182,7 +1182,8 @@ static void on_wp_presentation_feedback_presented(void *userdata,
 
     assert(wfeedback == psurf->priv->current.presentation_feedback);
 
-    psurf->priv->current.last_present_timestamp = (((uint64_t) tv_sec_hi) << 32 | tv_sec_lo) + tv_nsec;
+    psurf->priv->current.last_present_timestamp =
+        ((((uint64_t) tv_sec_hi) << 32) | tv_sec_lo) * 1000000000 + tv_nsec;
     psurf->priv->current.last_present_refresh = refresh;
 
     wp_presentation_feedback_destroy(psurf->priv->current.presentation_feedback);

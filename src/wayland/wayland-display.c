@@ -1219,7 +1219,7 @@ const char *eplWlHookQueryString(EGLDisplay edpy, EGLint name)
 
     if (pdpy == NULL)
     {
-        return EGL_FALSE;
+        return NULL;
     }
 
     if (name == EGL_EXTENSIONS)

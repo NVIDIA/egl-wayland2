@@ -368,7 +368,7 @@ static void OnSurfaceFeedbackTrancheDone(void *userdata,
     {
         for (i=0; i<psurf->priv->inst->render_device_id_count; i++)
         {
-            if (state->base.tranche_target_device != psurf->priv->inst->render_device_id[i])
+            if (state->base.tranche_target_device == psurf->priv->inst->render_device_id[i])
             {
                 use_tranche = EGL_TRUE;
                 break;

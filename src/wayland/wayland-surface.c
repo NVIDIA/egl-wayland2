@@ -381,11 +381,15 @@ static void OnSurfaceFeedbackTrancheDone(void *userdata,
         for (i=0; i<psurf->priv->driver_format->num_modifiers; i++)
         {
             state->modifiers_supported[i] = state->tranche_modifiers_supported[i];
-            state->tranche_modifiers_supported[i] = EGL_FALSE;
         }
         state->linear_supported = state->tranche_linear_supported;
-        state->tranche_linear_supported = EGL_FALSE;
     }
+
+    for (i=0; i<psurf->priv->driver_format->num_modifiers; i++)
+    {
+        state->tranche_modifiers_supported[i] = EGL_FALSE;
+    }
+    state->tranche_linear_supported = EGL_FALSE;
 
     eplWlDmaBufFeedbackCommonTrancheDone(&state->base);
 }

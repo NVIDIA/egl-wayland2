@@ -398,7 +398,6 @@ WlSwapChain *eplWlSwapChainCreate(WlDisplayInstance *inst, struct wl_surface *ws
         // linear present buffers. We don't need to create any present buffers
         // yet -- we can do that in the first call to eglSwapBuffers.
         swapchain->modifier = DRM_FORMAT_MOD_LINEAR;
-        close(dmabuf);
     }
     else
     {
@@ -407,6 +406,9 @@ WlSwapChain *eplWlSwapChainCreate(WlDisplayInstance *inst, struct wl_surface *ws
         swapchain->modifier = gbm_bo_get_modifier(gbo);
         swapchain->current_back = SwapChainAppendPresentBuffer(inst, swapchain,
                 dmabuf, gbm_bo_get_stride(gbo), gbm_bo_get_offset(gbo, 0));
+        // SwapChainAppendPresentBuffer takes ownership of the fd in both the
+        // success and failure cases.
+        dmabuf = -1;
         if (swapchain->current_back == NULL)
         {
             goto done;
@@ -421,6 +423,10 @@ done:
     {
         eplWlSwapChainDestroy(inst, swapchain);
         swapchain = NULL;
+    }
+    if (dmabuf >= 0)
+    {
+        close(dmabuf);
     }
     if (gbo != NULL)
     {

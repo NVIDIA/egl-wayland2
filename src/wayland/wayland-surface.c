@@ -1391,11 +1391,7 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
             // presentation time.
             DiscardPresentationFeedback(psurf);
         }
-        if (psurf->priv->current.frame_callback != NULL)
-        {
-            wl_callback_destroy(psurf->priv->current.frame_callback);
-            psurf->priv->current.frame_callback = NULL;
-        }
+
         if (psurf->priv->current.last_swap_sync != NULL)
         {
             wl_callback_destroy(psurf->priv->current.last_swap_sync);
@@ -1404,7 +1400,6 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
     }
 
     assert(psurf->priv->current.presentation_feedback == NULL);
-    assert(psurf->priv->current.frame_callback == NULL);
     assert(psurf->priv->current.last_swap_sync == NULL);
 
     if (rects != NULL && n_rects > 0
@@ -1503,10 +1498,22 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
             wp_fifo_v1_wait_barrier(psurf->priv->current.fifo);
         }
     }
-    else
+    else if (swap_interval > 0)
     {
-        // If we don't have FIFO or presentation time support, then just
-        // request a frame callback.
+        /*
+         * If we don't have FIFO or presentation time support, then just
+         * request a frame callback.
+         *
+         * Only send that request if the swap interval is non-zero, though.
+         * Since the server can wait indefinitely before sending the response,
+         * and since wl_callback doesn't have a destroy request, sending a
+         * wl_surface::frame request every frame without waiting for them could
+         * create an unbounded number of pending wl_callbacks in the server.
+         */
+
+        // If swap_interval is nonzero, then we should have called
+        // WaitForPreviousFrames above, which would clear frame_callback.
+        assert(psurf->priv->current.frame_callback == NULL);
         psurf->priv->current.frame_callback = wl_surface_frame(psurf->priv->current.wsurf);
         if (psurf->priv->current.frame_callback != NULL)
         {

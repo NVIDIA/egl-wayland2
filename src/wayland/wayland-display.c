@@ -1072,8 +1072,7 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
     }
 
     if (names.wp_presentation.name != 0
-            && names.wp_fifo_manager_v1.name != 0
-            && names.wp_commit_timing_manager_v1.name != 0)
+            && names.wp_fifo_manager_v1.name != 0)
     {
         inst->globals.presentation_time = BindGlobalObject(names.registry,
                 names.wp_presentation.name, &wp_presentation_interface,
@@ -1098,7 +1097,10 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
         {
             goto done;
         }
+    }
 
+    if (names.wp_commit_timing_manager_v1.name != 0)
+    {
         inst->globals.commit_timing = BindGlobalObject(names.registry,
                 names.wp_commit_timing_manager_v1.name, &wp_commit_timing_manager_v1_interface,
                 names.wp_commit_timing_manager_v1.version, NULL);

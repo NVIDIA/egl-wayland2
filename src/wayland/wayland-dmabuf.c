@@ -169,7 +169,7 @@ static WlFormatList *FinishDefaultFeedback(DefaultFeedbackState *state, dev_t *r
         if (tranche->target_device != state->base.main_device)
         {
             wl_array_release(&tranche->formats);
-            tranche->formats.size = 0;
+            wl_array_init(&tranche->formats);
             continue;
         }
 

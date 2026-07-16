@@ -334,7 +334,7 @@ static ProtocolVersionOverride *ParseProtocolOverrideString(const char *str)
     num_tokens = 0;
     while (FindNextStringToken(&tok, &len, ","))
     {
-        const char *sep = strchr(tok, '=');
+        const char *sep = memchr(tok, '=', len);
         if (sep != NULL)
         {
             size_t namelen = (sep - tok);

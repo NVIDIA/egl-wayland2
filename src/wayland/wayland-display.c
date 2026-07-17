@@ -413,7 +413,8 @@ static void FreeDisplayRegistry(WlDisplayRegistry *registry)
     }
 }
 
-static EGLBoolean GetDisplayRegistry(struct wl_display *wdpy,
+static EGLBoolean GetDisplayRegistry(EplPlatformData *plat,
+        struct wl_display *wdpy,
         struct wl_event_queue *queue,
         WlDisplayRegistry *names)
 {
@@ -443,6 +444,20 @@ static EGLBoolean GetDisplayRegistry(struct wl_display *wdpy,
     if (wl_display_roundtrip_queue(wdpy, queue) < 0)
     {
         goto done;
+    }
+
+    /*
+     * Version 4 and higher of the dma-buf protocol uses dev_t values to
+     * specify devices, which means we'll need drmGetDeviceFromDevId.
+     *
+     * If that function isn't available, then limit it to version 3.
+     */
+    if (plat->priv->drm.GetDeviceFromDevId == NULL
+            && names->zwp_linux_dmabuf_v1.version >= 4)
+    {
+        plat->callbacks.debugMessage(EGL_DEBUG_MSG_WARN_KHR,
+                "Server advertises zwp_linux_dmabuf_v1 version >= 4, but drmGetDeviceFromDevId is not available");
+        names->zwp_linux_dmabuf_v1.version = 3;
     }
 
     success = EGL_TRUE;
@@ -485,15 +500,72 @@ static void *BindGlobalObject(struct wl_registry *registry,
     return proxy;
 }
 
-void on_wl_drm_device(void *data, struct wl_drm *wl_drm, const char *name)
+/**
+ * The callback function to handle the default dma-buf feedback data in
+ * eglInitialize.
+ */
+static void DefaultFeedbackHandler(WlDmaBufFeedback *feedback,
+        struct glvnd_list *tranches, void *param)
+{
+    struct glvnd_list *head = param;
+
+    // We shouldn't get more than one batch of feedback data, but if we do, ignore all but the most recent.
+    eplWlDmaBufFeedbackTrancheFreeList(head);
+
+    // Just take the whole list.
+    glvnd_list_append(head, tranches);
+    glvnd_list_del(tranches);
+}
+
+static void DefaultFeedbackFormat(void *userdata, struct zwp_linux_dmabuf_v1 *wdmabuf, uint32_t format)
+{
+    // Empty -- we only need the modifier event.
+}
+
+static void DefaultFeedbackModifier(void *userdata, struct zwp_linux_dmabuf_v1 *wdmabuf,
+			 uint32_t fourcc, uint32_t modifier_hi, uint32_t modifier_lo)
+{
+    struct wl_array *entries = userdata;
+    uint64_t modifier = (((uint64_t) modifier_hi) << 32) | modifier_lo;
+    WlDmaBufFeedbackTableEntry *entry;
+
+    if (userdata == NULL || fourcc == DRM_FORMAT_INVALID || modifier == DRM_FORMAT_MOD_INVALID)
+    {
+        return;
+    }
+
+    wl_array_for_each(entry, entries)
+    {
+        if (entry->fourcc == fourcc && entry->modifier == modifier)
+        {
+            // Already found, so ignore it.
+            return;
+        }
+    }
+
+    entry = wl_array_add(entries, sizeof(WlDmaBufFeedbackTableEntry));
+    if (entry != NULL)
+    {
+        entry->fourcc = fourcc;
+        entry->modifier = modifier;
+    }
+}
+
+static const struct zwp_linux_dmabuf_v1_listener DEFAULT_DMABUF_LISTENER =
+{
+    .format = DefaultFeedbackFormat,
+    .modifier = DefaultFeedbackModifier,
+};
+
+static void on_wl_drm_device(void *data, struct wl_drm *wl_drm, const char *name)
 {
     char **ptr = data;
     free(*ptr);
     *ptr = strdup(name);
 }
-void on_wl_drm_format(void *data, struct wl_drm *wl_drm, uint32_t format) { }
-void on_wl_drm_authenticated(void *data, struct wl_drm *wl_drm) { }
-void on_wl_drm_capabilities(void *data, struct wl_drm *wl_drm, uint32_t value) { }
+static void on_wl_drm_format(void *data, struct wl_drm *wl_drm, uint32_t format) { }
+static void on_wl_drm_authenticated(void *data, struct wl_drm *wl_drm) { }
+static void on_wl_drm_capabilities(void *data, struct wl_drm *wl_drm, uint32_t value) { }
 static const struct wl_drm_listener INIT_WL_DRM_LISTENER =
 {
     on_wl_drm_device,
@@ -502,41 +574,232 @@ static const struct wl_drm_listener INIT_WL_DRM_LISTENER =
     on_wl_drm_capabilities,
 };
 
-static char *GetServerDrmNode(struct wl_display *wdpy, const WlDisplayRegistry *names)
+static EGLBoolean InitDmaBufV4(
+        WlDisplayInstance *inst,
+        const WlDisplayRegistry *names,
+        struct wl_event_queue *queue)
 {
-    struct wl_event_queue *queue = NULL;
-    struct wl_drm *drm = NULL;
-    char *node = NULL;
+    struct zwp_linux_dmabuf_v1 *wrapper = NULL;
+    struct zwp_linux_dmabuf_feedback_v1 *wfeedback = NULL;
+    EGLBoolean success = EGL_FALSE;
+    WlDmaBufFeedback *feedback = NULL;
 
-    if (names->wl_drm.name != 0)
+    // If we can use the feedback objects, then we don't want or expect any
+    // events from the zwp_linux_dmabuf_v1 object iself. Don't attach it to an
+    // event queue.
+    inst->globals.dmabuf = BindGlobalObject(names->registry, names->zwp_linux_dmabuf_v1.name,
+            &zwp_linux_dmabuf_v1_interface, names->zwp_linux_dmabuf_v1.version, NULL);
+    if (inst->globals.dmabuf == NULL)
     {
-        queue = wl_display_create_queue(wdpy);
-        if (queue == NULL)
-        {
-            goto done;
-        }
+        eplSetError(inst->platform, EGL_BAD_ALLOC, "Failed to create zwp_linux_dmabuf_v1 proxy");
+        goto done;
+    }
 
-        drm = BindGlobalObject(names->registry, names->wl_drm.name, &wl_drm_interface, 1, queue);
-        if (drm == NULL)
-        {
-            goto done;
-        }
+    wrapper = wl_proxy_create_wrapper(inst->globals.dmabuf);
+    if (wrapper == NULL)
+    {
+        eplSetError(inst->platform, EGL_BAD_ALLOC, "Failed to create zwp_linux_dmabuf_v1 wrapper");
+        goto done;
+    }
+    wl_proxy_set_queue((struct wl_proxy *) wrapper, queue);
 
-        wl_drm_add_listener(drm, &INIT_WL_DRM_LISTENER, &node);
-        wl_display_roundtrip_queue(wdpy, queue);
+    wfeedback = zwp_linux_dmabuf_v1_get_default_feedback(wrapper);
+    if (wfeedback == NULL)
+    {
+        eplSetError(inst->platform, EGL_BAD_ALLOC, "Failed to create default zwp_linux_dmabuf_feedback_v1 proxy");
+        goto done;
+    }
+
+    feedback = eplWlDmaBufFeedbackInit(inst->platform, wfeedback,
+            DefaultFeedbackHandler, &inst->default_feedback_tranches);
+    if (feedback != NULL)
+    {
+        wl_display_roundtrip_queue(inst->wdpy, queue);
+        eplWlDmaBufFeedbackDestroy(feedback);
+        success = EGL_TRUE;
     }
 
 done:
-    if (drm != NULL)
+    if (wfeedback != NULL)
     {
-        wl_drm_destroy(drm);
+        zwp_linux_dmabuf_feedback_v1_destroy(wfeedback);
     }
-    if (queue != NULL)
+    if (wrapper != NULL)
     {
-        wl_event_queue_destroy(queue);
+        wl_proxy_wrapper_destroy(wrapper);
+    }
+    return success;
+}
+
+static EGLBoolean InitDmaBufV3(
+        WlDisplayInstance *inst,
+        const WlDisplayRegistry *names,
+        struct wl_event_queue *queue,
+        char **ret_node)
+{
+    /*
+     * If we don't have a version new enough for feedback objects, we'll
+     * instead listen for zwp_linux_dmabuf_v1::modifier events, and use
+     * wl_drm to figure out which device the server is running on.
+     */
+    struct wl_array entries;
+    struct wl_drm *wdrm = NULL;
+    char *node = NULL;
+    EGLBoolean success = EGL_FALSE;
+
+    wl_array_init(&entries);
+
+    inst->globals.dmabuf = BindGlobalObject(names->registry, names->zwp_linux_dmabuf_v1.name,
+            &zwp_linux_dmabuf_v1_interface, names->zwp_linux_dmabuf_v1.version, queue);
+    if (inst->globals.dmabuf == NULL)
+    {
+        eplSetError(inst->platform, EGL_BAD_ALLOC, "Failed to create zwp_linux_dmabuf_v1 proxy");
+        goto done;
     }
 
-    return node;
+    if (names->wl_drm.name != 0)
+    {
+        wdrm = BindGlobalObject(names->registry, names->wl_drm.name, &wl_drm_interface, 1, queue);
+        if (wdrm == NULL)
+        {
+            eplSetError(inst->platform, EGL_BAD_ALLOC, "Failed to create wl_drm proxy");
+            goto done;
+        }
+
+        wl_drm_add_listener(wdrm, &INIT_WL_DRM_LISTENER, &node);
+    }
+
+    zwp_linux_dmabuf_v1_add_listener(inst->globals.dmabuf, &DEFAULT_DMABUF_LISTENER, &entries);
+    wl_display_roundtrip_queue(inst->wdpy, queue);
+
+    if (entries.size >= sizeof(WlDmaBufFeedbackTableEntry))
+    {
+        WlDmaBufFeedbackTranche *tranche = calloc(1, sizeof(WlDmaBufFeedbackTranche));
+        if (tranche != NULL)
+        {
+            size_t num_entries = entries.size / sizeof(WlDmaBufFeedbackTableEntry);
+            tranche->formats = eplWlCompileFormatList(entries.data, num_entries);
+            if (tranche->formats != NULL)
+            {
+                if (node != NULL)
+                {
+                    // If we got a device node from the server using wl_drm, then plug
+                    // in the dev_t as the target device and set the sampling flag.
+                    struct stat st;
+                    if (stat(node, &st) == 0)
+                    {
+                        tranche->target_device = st.st_rdev;
+                        tranche->flags |= ZWP_LINUX_DMABUF_FEEDBACK_V1_TRANCHE_FLAGS_SAMPLING;
+                    }
+                }
+
+                glvnd_list_append(&tranche->entry, &inst->default_feedback_tranches);
+            }
+            else
+            {
+                free(tranche);
+            }
+        }
+    }
+
+    success = EGL_TRUE;
+
+done:
+    if (inst->globals.dmabuf != NULL)
+    {
+        /*
+         * We shouldn't get any events after this, but if we do, clear the userdata
+         * pointer so that the event callbacks ignore them.
+         *
+         * Also switch it back to the default event queue, since this queue
+         * will get destroyed when we finish initialization.
+         */
+        wl_proxy_set_user_data((struct wl_proxy *) inst->globals.dmabuf, NULL);
+        wl_proxy_set_queue((struct wl_proxy *) inst->globals.dmabuf, NULL);
+    }
+    if (wdrm != NULL)
+    {
+        wl_drm_destroy(wdrm);
+    }
+
+    wl_array_release(&entries);
+    if (ret_node != NULL)
+    {
+        *ret_node = node;
+    }
+    else
+    {
+        free(node);
+    }
+    return success;
+}
+
+/**
+ * Initializes the dma-buf proxy, and fetches the default dma-buf feedback.
+ */
+static EGLBoolean InitDmaBuf(
+        WlDisplayInstance *inst,
+        const WlDisplayRegistry *names,
+        struct wl_event_queue *queue,
+        EGLBoolean from_init,
+        char **ret_node)
+{
+    assert(glvnd_list_is_empty(&inst->default_feedback_tranches));
+
+    if (names->zwp_linux_dmabuf_v1.name == 0
+            || names->zwp_linux_dmabuf_v1.version < ZWP_LINUX_DMABUF_V1_MODIFIER_SINCE_VERSION)
+    {
+        if (from_init)
+        {
+            eplSetError(inst->platform, EGL_BAD_ALLOC, "Server does not support zwp_linux_dmabuf_v1");
+        }
+        return EGL_FALSE;
+    }
+    else if (names->zwp_linux_dmabuf_v1.version < ZWP_LINUX_DMABUF_V1_GET_DEFAULT_FEEDBACK_SINCE_VERSION
+            && names->wl_drm.name == 0)
+    {
+        /*
+         * We need either zwp_linux_dmabuf_v1 version 4, or wl_drm in order to
+         * get a device from the server.
+         *
+         * Note that if the server supports linear, then it would be possible
+         * to make this work using our PRIME path. However, it's unlikely that
+         * any real-world compositors will support zwp_linux_dmabuf_v1 at
+         * exactly version 3, without also supporting wl_drm.
+         */
+        if (from_init)
+        {
+            eplSetError(inst->platform, EGL_BAD_ALLOC,
+                    "Server does not support wl_drm or zwp_linux_dmabuf_v1 version 4");
+        }
+        return EGL_FALSE;
+    }
+
+    if (names->zwp_linux_dmabuf_v1.version >= ZWP_LINUX_DMABUF_V1_GET_DEFAULT_FEEDBACK_SINCE_VERSION)
+    {
+        if (!InitDmaBufV4(inst, names, queue))
+        {
+            return EGL_FALSE;
+        }
+    }
+    else if (names->zwp_linux_dmabuf_v1.version >= ZWP_LINUX_DMABUF_V1_MODIFIER_SINCE_VERSION)
+    {
+        if (!InitDmaBufV3(inst, names, queue, ret_node))
+        {
+            return EGL_FALSE;
+        }
+    }
+
+    if (glvnd_list_is_empty(&inst->default_feedback_tranches))
+    {
+        if (from_init)
+        {
+            eplSetError(inst->platform, EGL_BAD_ALLOC, "Server sent no dma-buf feedback.");
+        }
+        return EGL_FALSE;
+    }
+
+    return EGL_TRUE;
 }
 
 /**
@@ -691,53 +954,6 @@ done:
     return fd;
 }
 
-static size_t LookupDeviceIds(EplPlatformData *plat, EGLDeviceEXT egldev, dev_t device_ids[2])
-{
-    const char *extensions = plat->egl.QueryDeviceStringEXT(egldev, EGL_EXTENSIONS);
-    size_t count = 0;
-    struct stat st;
-
-    if (eplFindExtension("EGL_EXT_device_drm", extensions))
-    {
-        const char *node = plat->egl.QueryDeviceStringEXT(egldev, EGL_DRM_DEVICE_FILE_EXT);
-        if (node == NULL)
-        {
-            return 0;
-        }
-
-        if (stat(node, &st) != 0)
-        {
-            eplSetError(plat, EGL_BAD_ACCESS, "Can't stat %s: %s", node, strerror(errno));
-            return 0;
-        }
-        device_ids[count++] = st.st_rdev;
-    }
-
-    if (eplFindExtension("EGL_EXT_device_drm_render_node", extensions))
-    {
-        const char *node = plat->egl.QueryDeviceStringEXT(egldev, EGL_DRM_RENDER_NODE_FILE_EXT);
-        if (node == NULL)
-        {
-            return 0;
-        }
-
-        if (stat(node, &st) != 0)
-        {
-            eplSetError(plat, EGL_BAD_ACCESS, "Can't stat %s: %s", node, strerror(errno));
-            return 0;
-        }
-        device_ids[count++] = st.st_rdev;
-    }
-
-    if (count == 0)
-    {
-        // This shouldn't happen: We should always at least suport
-        // EGL_EXT_device_drm on every device.
-        eplSetError(plat, EGL_BAD_ALLOC, "Driver error: Can't find device node paths");
-    }
-    return count;
-}
-
 static EGLBoolean CheckExplicitSyncSupport(EplPlatformData *plat, int drmfd)
 {
     uint64_t cap = 0;
@@ -804,12 +1020,12 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
     WlDisplayInstance *inst = NULL;
     WlDisplayRegistry names = {};
     struct wl_event_queue *queue = NULL;
+    WlDmaBufFeedbackTranche *tranche;
     dev_t mainDevice = 0;
     char *drmNode = NULL;
     int drmFd = -1;
     EGLDeviceEXT serverDevice = EGL_NO_DEVICE_EXT;
     EGLDeviceEXT renderDevice = EGL_NO_DEVICE_EXT;
-    const WlDmaBufFormat *fmt;
     EGLBoolean supportsLinear = EGL_FALSE;
     const char *ext = NULL;
     EGLBoolean success = EGL_FALSE;
@@ -822,6 +1038,7 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
     }
     eplRefCountInit(&inst->refcount);
     inst->platform = eplPlatformDataRef(pdpy->platform);
+    glvnd_list_init(&inst->default_feedback_tranches);
 
     if (pdpy->native_display == NULL)
     {
@@ -846,67 +1063,30 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
         goto done;
     }
 
-    if (!GetDisplayRegistry(inst->wdpy, queue, &names))
+    if (!GetDisplayRegistry(pdpy->platform, inst->wdpy, queue, &names))
     {
         eplSetError(pdpy->platform, EGL_BAD_ALLOC, "Failed to get Wayland registry");
         goto done;
     }
 
-    if (names.zwp_linux_dmabuf_v1.name == 0 || names.zwp_linux_dmabuf_v1.version < 3)
+    if (!InitDmaBuf(inst, &names, queue, from_init, &drmNode))
     {
-        if (from_init)
+        goto done;
+    }
+
+    // Find the server's main device. This is the device that should be used
+    // for rendering by default.
+    glvnd_list_for_each_entry(tranche, &inst->default_feedback_tranches, entry)
+    {
+        if (tranche->flags & ZWP_LINUX_DMABUF_FEEDBACK_V1_TRANCHE_FLAGS_SAMPLING)
         {
-            eplSetError(pdpy->platform, EGL_BAD_ALLOC, "Server does not support zwp_linux_dmabuf_v1");
+            mainDevice = tranche->target_device;
+            break;
         }
-        goto done;
-    }
-    if (names.zwp_linux_dmabuf_v1.version < 4 && names.wl_drm.name == 0)
-    {
-        /*
-         * We need either zwp_linux_dmabuf_v1 version 4, or wl_drm in order to
-         * get a device from the server.
-         *
-         * Note that if the server supports linear, then it would be possible
-         * to make this work using our PRIME path. However, it's unlikely that
-         * any real-world compositors will support zwp_linux_dmabuf_v1 at
-         * exactly version 3, without also supporting wl_drm.
-         */
-        if (from_init)
-        {
-            eplSetError(pdpy->platform, EGL_BAD_ALLOC, "Server does not support wl_drm or zwp_linux_dmabuf_v1 version 4");
-        }
-        goto done;
     }
 
-    inst->globals.dmabuf = BindGlobalObject(names.registry, names.zwp_linux_dmabuf_v1.name,
-            &zwp_linux_dmabuf_v1_interface, names.zwp_linux_dmabuf_v1.version, queue);
-    if (inst->globals.dmabuf == NULL)
-    {
-        eplSetError(pdpy->platform, EGL_BAD_ALLOC, "Failed to create zwp_linux_dmabuf_v1 proxy");
-        goto done;
-    }
-
-    /*
-     * Fetch the default set of formats and modifiers from the server.
-     *
-     * After this, we shouldn't get any more events from the zwp_linux_dmabuf_v1,
-     * and if we do, eplWlDmaBufFeedbackGetDefault will have already stubbed it
-     * out so that we ignore them.
-     *
-     * So, we reset the zwp_linux_dmabuf_v1 proxy's queue back to the default,
-     * which will allow us to destroy the wl_event_queue before returning.
-     */
-    inst->default_feedback = eplWlDmaBufFeedbackGetDefault(inst->wdpy, inst->globals.dmabuf, queue, &mainDevice);
-    wl_proxy_set_queue((struct wl_proxy *) inst->globals.dmabuf, NULL);
-    if (inst->default_feedback == NULL)
-    {
-        goto done;
-    }
-
-    // Get a device node path via wl_drm, if it's available. We'll use that as
-    // a fallback if we can't look up the device by a dev_t.
-    drmNode = GetServerDrmNode(inst->wdpy, &names);
-
+    // TODO: If the main device isn't an NVIDIA device, then we don't need a
+    // file descriptor for it.
     drmFd = OpenDrmDevice(pdpy->platform, mainDevice,
             drmNode, from_init, &serverDevice);
     if (drmFd < 0)
@@ -915,20 +1095,53 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
     }
 
     // Check if the server supports linear. If so, then we could support PRIME.
-    fmt = eplWlDmaBufFormatFind(inst->default_feedback->formats,
-            inst->default_feedback->num_formats, DRM_FORMAT_XRGB8888);
-    if (fmt != NULL)
+    glvnd_list_for_each_entry(tranche, &inst->default_feedback_tranches, entry)
     {
-        supportsLinear = eplWlDmaBufFormatSupportsModifier(fmt, DRM_FORMAT_MOD_LINEAR);
+        const WlDmaBufFormat *fmt = eplWlDmaBufFormatFind(tranche->formats->formats,
+                tranche->formats->num_formats, DRM_FORMAT_XRGB8888);
+        if (fmt != NULL)
+        {
+            if (eplWlDmaBufFormatSupportsModifier(fmt, DRM_FORMAT_MOD_LINEAR))
+            {
+                supportsLinear = EGL_TRUE;
+                break;
+            }
+        }
     }
 
     if (pdpy->priv->requested_device != EGL_NO_DEVICE_EXT)
     {
         // The user or app requested a particular device, so try to use it if
         // possible.
-        if (pdpy->priv->requested_device == serverDevice || supportsLinear)
+        if (supportsLinear)
         {
+            // If the server can accept linear dma-bufs, then we can use any
+            // device using the PRIME path.
             renderDevice = pdpy->priv->requested_device;
+        }
+        else
+        {
+            // If the requested device is a sampling device, then we can use it
+            // directly, without needing to go through PRIME.
+            dev_t reqId[2];
+            size_t num = eplWlGetDeviceIds(pdpy->platform, pdpy->priv->requested_device, reqId);
+            glvnd_list_for_each_entry(tranche, &inst->default_feedback_tranches, entry)
+            {
+                if (tranche->flags & ZWP_LINUX_DMABUF_FEEDBACK_V1_TRANCHE_FLAGS_SAMPLING)
+                {
+                    EGLBoolean found = EGL_FALSE;
+                    size_t i;
+                    for (i=0; i<num && !found; i++)
+                    {
+                        found = (tranche->target_device == reqId[i]);
+                    }
+                    if (found)
+                    {
+                        renderDevice = pdpy->priv->requested_device;
+                        break;
+                    }
+                }
+            }
         }
     }
     else
@@ -944,17 +1157,22 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
         // alternate, then do so.
         if (serverDevice != EGL_NO_DEVICE_EXT)
         {
-            // We can always render to the server's device
+            // If the server's main device is an NVIDIA device, then use it.
             renderDevice = serverDevice;
         }
         else if (supportsLinear)
         {
+            // If the server can accept linear, then pick an arbitrary NVIDIA
+            // device for rendering.
             EGLint num = 0;
             if (!pdpy->platform->egl.QueryDevicesEXT(1, &renderDevice, &num) || num <= 0)
             {
                 renderDevice = EGL_NO_DEVICE_EXT;
             }
         }
+
+        // TODO: If the server can't accept linear, then look to see if it has
+        // any NVIDIA device with the sampling flag set.
     }
 
     if (renderDevice == EGL_NO_DEVICE_EXT)
@@ -1006,12 +1224,20 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
                 goto done;
             }
         }
-
-        inst->force_prime = EGL_TRUE;
     }
+
+    inst->gbmdev = gbm_create_device(drmFd);
+    if (inst->gbmdev == NULL)
+    {
+        eplSetError(pdpy->platform, EGL_BAD_ALLOC, "Can't open GBM device");
+        goto done;
+    }
+    drmFd = -1;
 
     // Assume that if the server is running on a non-NVIDIA device, then it
     // supports implicit sync.
+    // TODO: We need to figure this out on a per-swapchain basis to account for
+    // multiple sampling devices.
     inst->supports_implicit_sync = (serverDevice == EGL_NO_DEVICE_EXT);
     if (inst->supports_implicit_sync)
     {
@@ -1024,15 +1250,7 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
         }
     }
 
-    inst->gbmdev = gbm_create_device(drmFd);
-    if (inst->gbmdev == NULL)
-    {
-        eplSetError(pdpy->platform, EGL_BAD_ALLOC, "Can't open GBM device");
-        goto done;
-    }
-    drmFd = -1;
-
-    inst->render_device_id_count = LookupDeviceIds(pdpy->platform, renderDevice, inst->render_device_id);
+    inst->render_device_id_count = eplWlGetDeviceIds(pdpy->platform, renderDevice, inst->render_device_id);
     if (inst->render_device_id_count == 0)
     {
         goto done;
@@ -1069,6 +1287,10 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
                 &wp_linux_drm_syncobj_manager_v1_interface,
                 names.wp_linux_drm_syncobj_manager_v1.version,
                 NULL);
+    }
+    if (!inst->supports_EGL_ANDROID_native_fence_sync)
+    {
+        inst->supports_implicit_sync = EGL_FALSE;
     }
 
     if (names.wp_presentation.name != 0
@@ -1115,7 +1337,8 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
     }
 
     inst->configs = eplWlInitConfigList(pdpy->platform, inst->internal_display->edpy,
-        inst->default_feedback, inst->driver_formats, EGL_TRUE, inst->force_prime, from_init);
+        &inst->default_feedback_tranches, inst->render_device_id, inst->render_device_id_count,
+        inst->driver_formats, EGL_TRUE, from_init);
     if (inst->configs == NULL)
     {
         goto done;
@@ -1198,7 +1421,7 @@ static void eplWlDisplayInstanceFree(WlDisplayInstance *inst)
             }
         }
 
-        eplWlFormatListFree(inst->default_feedback);
+        eplWlDmaBufFeedbackTrancheFreeList(&inst->default_feedback_tranches);
         eplWlFormatListFree(inst->driver_formats);
         eplConfigListFree(inst->configs);
         free(inst->extension_string);

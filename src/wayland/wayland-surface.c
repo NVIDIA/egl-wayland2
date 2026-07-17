@@ -1223,81 +1223,6 @@ static EGLBoolean WaitForPreviousFrames(EplSurface *psurf)
     return EGL_TRUE;
 }
 
-/**
- * Sets up a fence for client -> server synchronization.
- *
- * If we've got explicit sync, then this function will attach a fence to the
- * timeline object, but it will NOT send the set_acquire_point or
- * set_release_point request. The current timeline point will be set to the
- * acquire point.
- */
-static EGLBoolean SyncRendering(EplSurface *psurf, WlPresentBuffer *present_buf)
-{
-    EGLSync sync = EGL_NO_SYNC;
-    int syncFd = -1;
-    EGLBoolean success = EGL_FALSE;
-
-    if (!psurf->priv->inst->supports_EGL_ANDROID_native_fence_sync)
-    {
-        // If we don't have EGL_ANDROID_native_fence_sync, then we can't do
-        // anything other than a glFinish here.
-        assert(psurf->priv->current.syncobj == NULL);
-        psurf->priv->inst->platform->priv->egl.Finish();
-        return EGL_TRUE;
-    }
-
-    sync = psurf->priv->inst->platform->priv->egl.CreateSync(psurf->priv->inst->internal_display->edpy,
-            EGL_SYNC_NATIVE_FENCE_ANDROID, NULL);
-    if (sync == EGL_NO_SYNC)
-    {
-        goto done;
-    }
-    psurf->priv->inst->platform->priv->egl.Flush();
-
-    syncFd = psurf->priv->inst->platform->priv->egl.DupNativeFenceFDANDROID(psurf->priv->inst->internal_display->edpy, sync);
-    if (syncFd < 0)
-    {
-        goto done;
-    }
-
-    if (psurf->priv->current.syncobj != NULL)
-    {
-        assert(present_buf->timeline.wtimeline != NULL);
-
-        /*
-         * We've got explicit sync available, so plug the syncfd into the next
-         * timeline point.
-         *
-         * We let the caller send the set_acquire/release_point requests,
-         * though. That makes it easier to ensure that the sync requests are
-         * always sent alongside attach and commit requests.
-         */
-        success = eplWlTimelineAttachSyncFD(psurf->priv->inst, &present_buf->timeline, syncFd);
-    }
-    else
-    {
-        // Attach an implicit sync fence if we can. If we can't, then fall back
-        // to a CPU wait.
-        if (present_buf->dmabuf < 0 || !psurf->priv->inst->supports_implicit_sync
-                || !eplWlImportDmaBufSyncFile(present_buf->dmabuf, syncFd))
-        {
-            psurf->priv->inst->platform->priv->egl.Finish();
-        }
-        success = EGL_TRUE;
-    }
-
-done:
-    if (sync != EGL_NO_SYNC)
-    {
-        psurf->priv->inst->platform->priv->egl.DestroySync(psurf->priv->inst->internal_display->edpy, sync);
-    }
-    if (syncFd >= 0)
-    {
-        close(syncFd);
-    }
-    return success;
-}
-
 EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
         EplSurface *psurf, const EGLint *rects, EGLint n_rects)
 {
@@ -1368,7 +1293,7 @@ EGLBoolean eplWlSwapBuffers(EplPlatformData *plat, EplDisplay *pdpy,
         present_buf = psurf->priv->current.swapchain->current_back;
     }
 
-    if (!SyncRendering(psurf, present_buf))
+    if (!eplWlSwapChainSyncRendering(inst, psurf->priv->current.swapchain, present_buf))
     {
         goto done;
     }

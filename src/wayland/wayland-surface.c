@@ -258,41 +258,33 @@ struct _EplImplSurface
  *
  * This is used as a fallback if we don't have per-surface feedback.
  */
-static void PickDefaultModifiers(EplSurface *psurf)
+static EGLBoolean PickDefaultModifiers(EplSurface *psurf)
 {
     const WlDmaBufFormat *driver_format = psurf->priv->driver_format;
-    const WlDmaBufFormat *server_format;
-    size_t i;
+    EGLBoolean supports_linear = EGL_FALSE;
+    ssize_t num;
 
     psurf->priv->current.num_surface_modifiers = 0;
 
-    if (psurf->priv->inst->force_prime)
+    num = eplWlDmaBufGetSupportedModifiers(&psurf->priv->inst->default_feedback_tranches,
+        psurf->priv->inst->render_device_id,
+        psurf->priv->inst->render_device_id_count,
+        psurf->priv->present_fourcc,
+        driver_format->modifiers,
+        driver_format->num_modifiers,
+        psurf->priv->current.surface_modifiers,
+        &supports_linear,
+        NULL);
+
+    if (num < 0)
     {
-        // If we have to use PRIME, then leave the modifier list empty. The
-        // present buffers will all be linear, and the render buffer only has
-        // to match the driver, not the server's support.
-        return;
+        // This could happen if we're using a different format than the
+        // EGLConfig, which can happen if EGL_PRESENT_OPAQUE_EXT is set.
+        return EGL_FALSE;
     }
 
-    server_format = eplWlDmaBufFormatFind(psurf->priv->inst->default_feedback->formats,
-            psurf->priv->inst->default_feedback->num_formats, psurf->priv->present_fourcc);
-
-    if (server_format == NULL)
-    {
-        // This should never happen unless we're using a different format than
-        // the EGLConfig: If we didn't find server support for this format,
-        // then we should never have set EGL_WINDOW_BIT for the EGLConfig.
-        assert(psurf->priv->present_fourcc != driver_format->fourcc);
-        return;
-    }
-
-    for (i=0; i<driver_format->num_modifiers; i++)
-    {
-        if (eplWlDmaBufFormatSupportsModifier(server_format, driver_format->modifiers[i]))
-        {
-            psurf->priv->current.surface_modifiers[psurf->priv->current.num_surface_modifiers++] = driver_format->modifiers[i];
-        }
-    }
+    psurf->priv->current.num_surface_modifiers = num;
+    return EGL_TRUE;
 }
 
 /**
@@ -457,7 +449,7 @@ static EGLBoolean CreateSurfaceFeedback(EplSurface *psurf)
     SurfaceFeedbackState *state;
     struct zwp_linux_dmabuf_v1 *wrapper = NULL;
 
-    if (inst->force_prime || wl_proxy_get_version((struct wl_proxy *) inst->globals.dmabuf)
+    if (wl_proxy_get_version((struct wl_proxy *) inst->globals.dmabuf)
             < ZWP_LINUX_DMABUF_V1_GET_SURFACE_FEEDBACK_SINCE_VERSION)
     {
         return EGL_TRUE;
@@ -972,35 +964,24 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
     }
 
     // Initialize the modifier list based on the default modifiers.
-    PickDefaultModifiers(psurf);
-    if (psurf->priv->current.num_surface_modifiers == 0)
+    if (!PickDefaultModifiers(psurf))
     {
         /*
-         * If we didn't find any shared modifiers, then check if the server
-         * supports linear. If it does, then we can use the prime path instead.
+         * If the app set the EGL_PRESENT_OPAQUE_EXT, then the format we're
+         * sending to the server might be different than the format for the
+         * EGLConfig.
+         *
+         * In that case, it's possible (if unlikely) that the server could
+         * have different modifier support.
+         *
+         * If we're using the same format as the EGLConfig, then we
+         * shouldn't get here, because the EGL_WINDOW_BIT flag should not
+         * have been set.
          */
-        const WlDmaBufFormat *server_format = eplWlDmaBufFormatFind(psurf->priv->inst->default_feedback->formats,
-                psurf->priv->inst->default_feedback->num_formats, psurf->priv->present_fourcc);
-        if (server_format == NULL
-                || !eplWlDmaBufFormatSupportsModifier(server_format, DRM_FORMAT_MOD_LINEAR))
-        {
-            /*
-             * If the app set the EGL_PRESENT_OPAQUE_EXT, then the format we're
-             * sending to the server might be different than the format for the
-             * EGLConfig.
-             *
-             * In that case, it's possible (if unlikely) that the server could
-             * have different modifier support.
-             *
-             * If we're using the same modifier as the EGLConfig, then we
-             * shouldn't get here, because the EGL_WINDOW_BIT flag should not
-             * have been set.
-             */
-            assert(psurf->priv->present_fourcc != driver_format->fourcc);
-            eplSetError(plat, EGL_BAD_ALLOC, "No supported format modifiers for opaque format 0x%08x\n",
-                    psurf->priv->present_fourcc);
-            goto done;
-        }
+        assert(psurf->priv->present_fourcc != driver_format->fourcc);
+        eplSetError(plat, EGL_BAD_ALLOC, "No supported format modifiers for opaque format 0x%08x\n",
+                psurf->priv->present_fourcc);
+        goto done;
     }
 
     if (!CreateSurfaceFeedback(psurf))

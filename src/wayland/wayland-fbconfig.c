@@ -172,17 +172,16 @@ done:
 
 static EGLBoolean SetupConfig(EplPlatformData *plat,
         EGLDisplay internal_display,
-        const WlFormatList *server_formats,
+        struct glvnd_list *tranches,
+        const dev_t *render_devices,
+        size_t render_device_count,
         const WlFormatList *driver_formats,
         EGLBoolean allow_prime,
-        EGLBoolean force_prime,
         EplConfig *config)
 {
     const WlDmaBufFormat *driver_fmt = NULL;
-    const WlDmaBufFormat *server_fmt = NULL;
     EGLint fourcc = DRM_FORMAT_INVALID;
-    EGLBoolean supported = EGL_FALSE;
-    size_t i, j;
+    ssize_t num_mods;
 
     config->surfaceMask &= ~(EGL_WINDOW_BIT | EGL_PIXMAP_BIT);
 
@@ -231,45 +230,25 @@ static EGLBoolean SetupConfig(EplPlatformData *plat,
         return EGL_TRUE;
     }
 
-    server_fmt = eplWlDmaBufFormatFind(server_formats->formats, server_formats->num_formats, fourcc);
-    if (server_fmt == NULL)
-    {
-        // The server doesn't support importing a dma-buf with this format.
-        return EGL_TRUE;
-    }
-
-    for (i=0; i<server_fmt->num_modifiers && !supported; i++)
-    {
-        if (allow_prime && server_fmt->modifiers[i] == DRM_FORMAT_MOD_LINEAR)
-        {
-            // If the server supports linear, then we can always work with that.
-            supported = EGL_TRUE;
-        }
-        else if (!force_prime)
-        {
-            for (j=0; j<driver_fmt->num_modifiers && !supported; j++)
-            {
-                if (server_fmt->modifiers[i] == driver_fmt->modifiers[j])
-                {
-                    supported = EGL_TRUE;
-                }
-            }
-        }
-    }
-
-    if (supported)
+    num_mods = eplWlDmaBufGetSupportedModifiers(tranches,
+            render_devices, render_device_count, fourcc,
+            driver_fmt->modifiers, driver_fmt->num_modifiers,
+            NULL, NULL, NULL);
+    if (num_mods >= 0 || (allow_prime && num_mods == 0))
     {
         config->surfaceMask |= EGL_WINDOW_BIT;
     }
+
     return EGL_TRUE;
 }
 
 EplConfigList *eplWlInitConfigList(EplPlatformData *plat,
         EGLDisplay internal_display,
-        const WlFormatList *server_formats,
+        struct glvnd_list *tranches,
+        const dev_t *render_devices,
+        size_t render_device_count,
         const WlFormatList *driver_formats,
         EGLBoolean allow_prime,
-        EGLBoolean force_prime,
         EGLBoolean from_init)
 {
     int i;
@@ -285,8 +264,8 @@ EplConfigList *eplWlInitConfigList(EplPlatformData *plat,
 
     for (i=0; i<configs->num_configs; i++)
     {
-        if (!SetupConfig(plat, internal_display, server_formats, driver_formats,
-                    allow_prime, force_prime, &configs->configs[i]))
+        if (!SetupConfig(plat, internal_display, tranches, render_devices, render_device_count,
+                    driver_formats, allow_prime, &configs->configs[i]))
         {
             eplConfigListFree(configs);
             return NULL;

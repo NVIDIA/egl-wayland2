@@ -295,32 +295,6 @@ ssize_t eplWlDmaBufGetSupportedModifiers(struct glvnd_list *tranches,
         EGLBoolean *ret_supports_linear,
         dev_t *ret_sampling_device);
 
-/**
- * Returns the default dma-buf feedback data.
- *
- * If the \c zwp_linux_dmabuf_v1 is version 3, then this will instead use the old
- * events on the \c zwp_linux_dmabuf_v1 itself to get a format and modifier
- * list. In that case, it will return zero for \p main_device fields will be
- * zero.
- *
- * For version 4 or later, this will use a \c zwp_linux_dmabuf_feedback_v1 to
- * get the default feedback data. It will return a combined format list for all
- * of the tranches for the main device, and ignore any tranches that apply to
- * any other devices.
- *
- * \param wdpy The display connection
- * \param wdmabuf The \c zwp_linux_dmabuf_v1 proxy
- * \param queue The event queue associated with \p wdmabuf. Note that this is
- *      only used for version 3. For version 4, the zwp_linux_dmabuf_feedback_v1
- *      gets its own event queue.
- * \return A new \c WlFormatList object, or NULL on error. The caller
- *      must free it using \c eplWlFormatListFree.
- */
-WlFormatList *eplWlDmaBufFeedbackGetDefault(struct wl_display *wdpy,
-        struct zwp_linux_dmabuf_v1 *wdmabuf,
-        struct wl_event_queue *queue,
-        dev_t *ret_main_device);
-
 void eplWlFormatListFree(WlFormatList *data);
 
 const WlDmaBufFormat *eplWlDmaBufFormatFind(const WlDmaBufFormat *formats,

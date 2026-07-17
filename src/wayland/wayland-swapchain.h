@@ -217,6 +217,17 @@ WlPresentBuffer *eplWlSwapChainFindFreePresentBuffer(WlDisplayInstance *inst,
         WlSwapChain *swapchain);
 
 /**
+ * Sets up a fence for client -> server synchronization.
+ *
+ * If we've got explicit sync, then this function will attach a fence to the
+ * timeline object, but it will NOT send the set_acquire_point or
+ * set_release_point request. The current timeline point will be set to the
+ * acquire point.
+ */
+EGLBoolean eplWlSwapChainSyncRendering(WlDisplayInstance *inst,
+        WlSwapChain *swapchain, WlPresentBuffer *present_buf);
+
+/**
  * Updates the buffer age counters for each buffer.
  *
  * \param inst The WlDisplayInstance for the display

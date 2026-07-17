@@ -804,6 +804,72 @@ WlPresentBuffer *eplWlSwapChainFindFreePresentBuffer(WlDisplayInstance *inst,
     }
 }
 
+EGLBoolean eplWlSwapChainSyncRendering(WlDisplayInstance *inst,
+        WlSwapChain *swapchain, WlPresentBuffer *present_buf)
+{
+    EGLSync sync = EGL_NO_SYNC;
+    int syncFd = -1;
+    EGLBoolean success = EGL_FALSE;
+
+    if (!inst->supports_EGL_ANDROID_native_fence_sync)
+    {
+        // If we don't have EGL_ANDROID_native_fence_sync, then we can't do
+        // anything other than a glFinish here.
+        assert(present_buf->timeline.wtimeline == NULL);
+        inst->platform->priv->egl.Finish();
+        return EGL_TRUE;
+    }
+
+    sync = inst->platform->priv->egl.CreateSync(inst->internal_display->edpy,
+            EGL_SYNC_NATIVE_FENCE_ANDROID, NULL);
+    if (sync == EGL_NO_SYNC)
+    {
+        goto done;
+    }
+    inst->platform->priv->egl.Flush();
+
+    syncFd = inst->platform->priv->egl.DupNativeFenceFDANDROID(inst->internal_display->edpy, sync);
+    if (syncFd < 0)
+    {
+        goto done;
+    }
+
+    if (present_buf->timeline.wtimeline != NULL)
+    {
+        /*
+         * We've got explicit sync available, so plug the syncfd into the next
+         * timeline point.
+         *
+         * We let the caller send the set_acquire/release_point requests,
+         * though. That makes it easier to ensure that the sync requests are
+         * always sent alongside attach and commit requests.
+         */
+        success = eplWlTimelineAttachSyncFD(inst, &present_buf->timeline, syncFd);
+    }
+    else
+    {
+        // Attach an implicit sync fence if we can. If we can't, then fall back
+        // to a CPU wait.
+        if (present_buf->dmabuf < 0 || !inst->supports_implicit_sync
+                || !eplWlImportDmaBufSyncFile(present_buf->dmabuf, syncFd))
+        {
+            inst->platform->priv->egl.Finish();
+        }
+        success = EGL_TRUE;
+    }
+
+done:
+    if (sync != EGL_NO_SYNC)
+    {
+        inst->platform->priv->egl.DestroySync(inst->internal_display->edpy, sync);
+    }
+    if (syncFd >= 0)
+    {
+        close(syncFd);
+    }
+    return success;
+}
+
 void eplWlSwapChainUpdateBufferAge(WlDisplayInstance *inst, WlSwapChain *swapchain,
         WlPresentBuffer *presented_buffer)
 {
@@ -827,3 +893,4 @@ void eplWlSwapChainUpdateBufferAge(WlDisplayInstance *inst, WlSwapChain *swapcha
 
     presented_buffer->buffer_age = 1;
 }
+

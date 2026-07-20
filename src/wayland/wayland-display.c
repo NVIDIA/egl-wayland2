@@ -1028,6 +1028,7 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
     EGLDeviceEXT renderDevice = EGL_NO_DEVICE_EXT;
     EGLBoolean supportsLinear = EGL_FALSE;
     const char *ext = NULL;
+    const char *env;
     EGLBoolean success = EGL_FALSE;
 
     inst = calloc(1, sizeof(WlDisplayInstance));
@@ -1226,6 +1227,14 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
         }
     }
 
+    // Allow disabling implicit sync. This shouldn't be necessary in
+    // practice, but it can be useful for testing.
+    env = getenv("__NV_DISABLE_IMPLICIT_SYNC");
+    if (env != NULL && atoi(env) != 0)
+    {
+        inst->implicit_sync_disabled = EGL_TRUE;
+    }
+
     inst->gbmdev = gbm_create_device(drmFd);
     if (inst->gbmdev == NULL)
     {
@@ -1233,22 +1242,6 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
         goto done;
     }
     drmFd = -1;
-
-    // Assume that if the server is running on a non-NVIDIA device, then it
-    // supports implicit sync.
-    // TODO: We need to figure this out on a per-swapchain basis to account for
-    // multiple sampling devices.
-    inst->supports_implicit_sync = (serverDevice == EGL_NO_DEVICE_EXT);
-    if (inst->supports_implicit_sync)
-    {
-        // Allow disabling implicit sync. This shouldn't be necessary in
-        // practice, but it can be useful for testing.
-        const char *env = getenv("__NV_DISABLE_IMPLICIT_SYNC");
-        if (env != NULL && atoi(env) != 0)
-        {
-            inst->supports_implicit_sync = EGL_FALSE;
-        }
-    }
 
     inst->render_device_id_count = eplWlGetDeviceIds(pdpy->platform, renderDevice, inst->render_device_id);
     if (inst->render_device_id_count == 0)
@@ -1290,7 +1283,7 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
     }
     if (!inst->supports_EGL_ANDROID_native_fence_sync)
     {
-        inst->supports_implicit_sync = EGL_FALSE;
+        inst->implicit_sync_disabled = EGL_TRUE;
     }
 
     if (names.wp_presentation.name != 0

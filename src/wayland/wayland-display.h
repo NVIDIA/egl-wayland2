@@ -127,9 +127,9 @@ typedef struct
     EGLBoolean supports_EGL_ANDROID_native_fence_sync;
 
     /**
-     * True if we can use implicit sync.
+     * True if implicit sync is disabled.
      */
-    EGLBoolean supports_implicit_sync;
+    EGLBoolean implicit_sync_disabled;
 
     /**
      * The EGL_EXTENSIONS string for this display.

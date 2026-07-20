@@ -152,6 +152,23 @@ typedef struct
     EGLBoolean prime;
 
     /**
+     * The device that we set as the sampling device when creating a wl_buffer.
+     *
+     * For non-PRIME, this is always the same device that we're using for
+     * rendering.
+     *
+     * Note that for PRIME, the dma-buf is in sysmem, so any device should be
+     * able to access it. However, the specific device can affect whether or
+     * not implicit sync is supported.
+     */
+    dev_t sampling_device;
+
+    /**
+     * True if we can use implicit sync semantics with this swapchain.
+     */
+    EGLBoolean supports_implicit_sync;
+
+    /**
      * The color buffers that we've allocated for this window.
      *
      * This is a list of WlPresentBuffer structs.
@@ -200,7 +217,7 @@ typedef struct
  */
 WlSwapChain *eplWlSwapChainCreate(WlDisplayInstance *inst, struct wl_surface *wsurf,
         uint32_t width, uint32_t height, uint32_t render_fourcc, uint32_t present_fourcc,
-        EGLBoolean prime, const uint64_t *modifiers, size_t num_modifiers);
+        EGLBoolean prime, dev_t sampling_device, const uint64_t *modifiers, size_t num_modifiers);
 
 void eplWlSwapChainDestroy(WlDisplayInstance *inst, WlSwapChain *swapchain);
 

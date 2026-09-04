@@ -70,29 +70,6 @@ typedef struct
 } WlDmaBufFeedbackTableEntry;
 
 /**
- * A common struct for handling dma-buf feedback data.
- *
- * This is used by the common handlers for default and per-surface feedback.
- */
-typedef struct
-{
-    /// The current format table.
-    WlDmaBufFeedbackTableEntry *format_table;
-    size_t format_table_len;
-
-    dev_t main_device;
-
-    /// The target device for the current tranche.
-    dev_t tranche_target_device;
-
-    /// The flags for the current tranche.
-    uint32_t tranche_flags;
-
-    /// If true, then we ran into a malloc failure or some other error along the way.
-    EGLBoolean error;
-} WlDmaBufFeedbackCommon;
-
-/**
  * Keeps track of feedback data from a \c zwp_linux_dmabuf_feedback_v1.
  *
  * This object keeps track of all of the dma-buf feedback data as it arrives.
@@ -135,44 +112,6 @@ typedef struct
 
     struct glvnd_list entry;
 } WlDmaBufFeedbackTranche;
-
-void eplWlDmaBufFeedbackCommonInit(WlDmaBufFeedbackCommon *base);
-void eplWlDmaBufFeedbackCommonCleanup(WlDmaBufFeedbackCommon *base);
-
-/**
- * Called for a zwp_linux_dmabuf_feedback_v1::done event.
- *
- * This just clears any data to get ready for the next update, so it should be
- * called after the caller processes whatever data is there.
- */
-void eplWlDmaBufFeedbackCommonDone(WlDmaBufFeedbackCommon *base);
-
-/**
- * Called for a zwp_linux_dmabuf_feedback_v1::tranche_done event.
- *
- * This just clears any data to get ready for the next tranche, so it should be
- * called after the caller processes whatever data is there.
- */
-void eplWlDmaBufFeedbackCommonTrancheDone(WlDmaBufFeedbackCommon *base);
-
-/**
- * Handles a zwp_linux_dmabuf_feedback_v1::format_table event.
- */
-void eplWlDmaBufFeedbackCommonFormatTable(void *userdata,
-        struct zwp_linux_dmabuf_feedback_v1 *zwp_linux_dmabuf_feedback_v1,
-        int32_t fd, uint32_t size);
-
-void eplWlDmaBufFeedbackCommonMainDevice(void *userdata,
-        struct zwp_linux_dmabuf_feedback_v1 *wfeedback,
-        struct wl_array *device);
-
-void eplWlDmaBufFeedbackCommonTrancheTargetDevice(void *userdata,
-        struct zwp_linux_dmabuf_feedback_v1 *wfeedback,
-        struct wl_array *device);
-
-void eplWlDmaBufFeedbackCommonTrancheFlags(void *userdata,
-        struct zwp_linux_dmabuf_feedback_v1 *wfeedback,
-        uint32_t flags);
 
 /**
  * A callback function to handle a new batch of dma-buf feedback.

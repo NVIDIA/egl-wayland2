@@ -110,6 +110,23 @@ struct _EplImplPlatform
 EGLDeviceEXT eplWlFindDeviceForNode(EplPlatformData *plat, const char *node);
 
 /**
+ * Finds an EGLDeviceEXT handle that corresponds to a given DRI device node,
+ * based on the device numbers.
+ */
+EGLDeviceEXT eplWlFindDeviceForNodeId(EplPlatformData *plat, dev_t id);
+
+/**
+ * Returns the DRM device node numbers for an EGLDeviceEXT.
+ *
+ * \param plat The EplPlatformData
+ * \param edev The EGLDeviceEXT to look up
+ * \param[out] ret_ids The device node numbers for the device.
+ *
+ * \return The number of elements returned in ret_ids.
+ */
+size_t eplWlGetDeviceIds(EplPlatformData *plat, EGLDeviceEXT edev, dev_t ret_ids[2]);
+
+/**
  * A wrapper around the DMA_BUF_IOCTL_IMPORT_SYNC_FILE ioctl.
  *
  * \param dmabuf The dma-buf to modify.

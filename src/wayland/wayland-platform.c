@@ -21,6 +21,7 @@
 #include <string.h>
 #include <dlfcn.h>
 #include <errno.h>
+#include <sys/stat.h>
 #include <assert.h>
 
 #include "wayland-display.h"
@@ -287,6 +288,75 @@ EGLDeviceEXT eplWlFindDeviceForNode(EplPlatformData *plat, const char *node)
             {
                 found = devices[i];
                 break;
+            }
+        }
+    }
+
+    return found;
+}
+
+size_t eplWlGetDeviceIds(EplPlatformData *plat, EGLDeviceEXT edev, dev_t ret_ids[2])
+{
+    const char *extensions = plat->egl.QueryDeviceStringEXT(edev, EGL_EXTENSIONS);
+    size_t count = 0;
+    struct stat st;
+
+    if (eplFindExtension("EGL_EXT_device_drm", extensions))
+    {
+        const char *node = plat->egl.QueryDeviceStringEXT(edev, EGL_DRM_DEVICE_FILE_EXT);
+        if (node != NULL)
+        {
+            if (stat(node, &st) == 0)
+            {
+                ret_ids[count++] = st.st_rdev;
+            }
+        }
+    }
+
+    if (eplFindExtension("EGL_EXT_device_drm_render_node", extensions))
+    {
+        const char *node = plat->egl.QueryDeviceStringEXT(edev, EGL_DRM_RENDER_NODE_FILE_EXT);
+        if (node != NULL)
+        {
+            if (stat(node, &st) == 0)
+            {
+                ret_ids[count++] = st.st_rdev;
+            }
+        }
+    }
+
+    return count;
+}
+
+EGLDeviceEXT eplWlFindDeviceForNodeId(EplPlatformData *plat, dev_t id)
+{
+    EGLDeviceEXT *devices = NULL;
+    EGLDeviceEXT found = EGL_NO_DEVICE_EXT;
+    EGLint num = 0;
+    int i;
+
+    if (!plat->egl.QueryDevicesEXT(0, NULL, &num) || num <= 0)
+    {
+        return EGL_NO_DEVICE_EXT;
+    }
+
+    devices = alloca(num * sizeof(EGLDeviceEXT));
+    if (!plat->egl.QueryDevicesEXT(num, devices, &num) || num <= 0)
+    {
+        return EGL_NO_DEVICE_EXT;
+    }
+
+    for (i=0; i<num && found == EGL_NO_DEVICE_EXT; i++)
+    {
+        dev_t ids[2];
+        size_t id_count = eplWlGetDeviceIds(plat, devices[i], ids);
+        size_t j;
+
+        for (j=0; j<id_count && found == EGL_NO_DEVICE_EXT; j++)
+        {
+            if (ids[j] == id)
+            {
+                found = devices[i];
             }
         }
     }

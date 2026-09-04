@@ -32,7 +32,7 @@
 #include "wayland-fbconfig.h"
 
 // The minimum and maximum versions of each protocol that we support.
-static const uint32_t PROTO_DMABUF_VERSION[2] = { 3, 4 };
+static const uint32_t PROTO_DMABUF_VERSION[2] = { 3, 6 };
 static const uint32_t PROTO_SYNC_OBJ_VERSION[2] = { 1, 1 };
 static const uint32_t PROTO_DRM_VERSION[2] = { 1, 1 };
 static const uint32_t PROTO_PRESENTATION_TIME_VERSION[2] = { 1, 2 };

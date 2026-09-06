@@ -515,6 +515,15 @@ static int CheckBufferReleaseExplicit(WlDisplayInstance *inst, WlSwapChain *swap
     uint32_t first;
     int ret, err;
 
+    /* Explicit synchronization controls buffer reuse, but compositors can still
+     * send wl_buffer::release. Drain those events even though these proxies
+     * have no release listener, otherwise the private queue grows every frame.
+     */
+    if (wl_display_dispatch_queue_pending(inst->wdpy, swapchain->queue) < 0)
+    {
+        return -1;
+    }
+
     count = 0;
     glvnd_list_for_each_entry(buffer, &swapchain->present_buffers, entry)
     {

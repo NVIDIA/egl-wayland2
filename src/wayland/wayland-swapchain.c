@@ -334,8 +334,7 @@ WlSwapChain *eplWlSwapChainCreate(WlDisplayInstance *inst, struct wl_surface *ws
     int dmabuf = -1;
     EGLBoolean success = EGL_FALSE;
 
-    assert(prime || sampling_device == inst->render_device_id[0]
-            || sampling_device == inst->render_device_id[1]);
+    assert(prime || eplWlCheckDeviceId(&inst->render_device_id, sampling_device));
 
     swapchain = calloc(1, sizeof(WlSwapChain));
     if (swapchain == NULL)

@@ -91,8 +91,7 @@ typedef struct
      * This is an array so that it contains both the primary and render
      * devices.
      */
-    dev_t render_device_id[2];
-    size_t render_device_id_count;
+    WlDeviceIds render_device_id;
 
     /**
      * The default dma-buf feedback data that we received when eglInitialize

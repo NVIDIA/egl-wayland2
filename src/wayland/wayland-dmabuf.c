@@ -498,8 +498,7 @@ void eplWlDmaBufFeedbackTrancheFreeList(struct glvnd_list *tranches)
 
 ssize_t eplWlDmaBufGetSupportedTrancheModifiers(
         const WlDmaBufFeedbackTranche *tranche,
-        const dev_t *render_devices,
-        size_t render_device_count,
+        const WlDeviceIds *render_device,
         uint32_t fourcc,
         const uint64_t *driver_mods,
         size_t num_driver_mods,
@@ -518,19 +517,10 @@ ssize_t eplWlDmaBufGetSupportedTrancheModifiers(
 
     if (tranche->flags & ZWP_LINUX_DMABUF_FEEDBACK_V1_TRANCHE_FLAGS_SAMPLING)
     {
-        EGLBoolean is_render_device = EGL_FALSE;
-        size_t i;
+        if (eplWlCheckDeviceId(render_device, tranche->target_device))
+        {
+            size_t i;
 
-        for (i=0; i<render_device_count; i++)
-        {
-            if (tranche->target_device == render_devices[i])
-            {
-                is_render_device = EGL_TRUE;
-                break;
-            }
-        }
-        if (is_render_device)
-        {
             // The server can sample directly from the rendering device, so see
             // which modifiers the server can handle.
             for (i=0; i<num_driver_mods; i++)
@@ -566,8 +556,7 @@ ssize_t eplWlDmaBufGetSupportedTrancheModifiers(
 }
 
 ssize_t eplWlDmaBufGetSupportedModifiers(struct glvnd_list *tranches,
-        const dev_t *render_devices,
-        size_t render_device_count,
+        const WlDeviceIds *render_device,
         uint32_t fourcc,
         const uint64_t *driver_mods,
         size_t num_driver_mods,
@@ -579,8 +568,8 @@ ssize_t eplWlDmaBufGetSupportedModifiers(struct glvnd_list *tranches,
 
     glvnd_list_for_each_entry(tranche, tranches, entry)
     {
-        ssize_t ret = eplWlDmaBufGetSupportedTrancheModifiers(tranche, render_devices,
-                render_device_count, fourcc, driver_mods, num_driver_mods,
+        ssize_t ret = eplWlDmaBufGetSupportedTrancheModifiers(tranche,
+                render_device, fourcc, driver_mods, num_driver_mods,
                 ret_supported_mods, ret_supports_linear);
         if (ret >= 0)
         {

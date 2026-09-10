@@ -1124,22 +1124,18 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
         {
             // If the requested device is a sampling device, then we can use it
             // directly, without needing to go through PRIME.
-            dev_t reqId[2];
-            size_t num = eplWlGetDeviceIds(pdpy->platform, pdpy->priv->requested_device, reqId);
-            glvnd_list_for_each_entry(tranche, &inst->default_feedback_tranches, entry)
+            WlDeviceIds reqId;
+            if (eplWlGetDeviceIds(pdpy->platform, pdpy->priv->requested_device, &reqId))
             {
-                if (tranche->flags & ZWP_LINUX_DMABUF_FEEDBACK_V1_TRANCHE_FLAGS_SAMPLING)
+                glvnd_list_for_each_entry(tranche, &inst->default_feedback_tranches, entry)
                 {
-                    EGLBoolean found = EGL_FALSE;
-                    size_t i;
-                    for (i=0; i<num && !found; i++)
+                    if (tranche->flags & ZWP_LINUX_DMABUF_FEEDBACK_V1_TRANCHE_FLAGS_SAMPLING)
                     {
-                        found = (tranche->target_device == reqId[i]);
-                    }
-                    if (found)
-                    {
-                        renderDevice = pdpy->priv->requested_device;
-                        break;
+                        if (eplWlCheckDeviceId(&reqId, tranche->target_device))
+                        {
+                            renderDevice = pdpy->priv->requested_device;
+                            break;
+                        }
                     }
                 }
             }
@@ -1243,8 +1239,7 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
     }
     drmFd = -1;
 
-    inst->render_device_id_count = eplWlGetDeviceIds(pdpy->platform, renderDevice, inst->render_device_id);
-    if (inst->render_device_id_count == 0)
+    if (!eplWlGetDeviceIds(pdpy->platform, renderDevice, &inst->render_device_id))
     {
         goto done;
     }
@@ -1330,7 +1325,7 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
     }
 
     inst->configs = eplWlInitConfigList(pdpy->platform, inst->internal_display->edpy,
-        &inst->default_feedback_tranches, inst->render_device_id, inst->render_device_id_count,
+        &inst->default_feedback_tranches, &inst->render_device_id,
         inst->driver_formats, EGL_TRUE, from_init);
     if (inst->configs == NULL)
     {

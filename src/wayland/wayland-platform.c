@@ -295,10 +295,10 @@ EGLDeviceEXT eplWlFindDeviceForNode(EplPlatformData *plat, const char *node)
     return found;
 }
 
-size_t eplWlGetDeviceIds(EplPlatformData *plat, EGLDeviceEXT edev, dev_t ret_ids[2])
+EGLBoolean eplWlGetDeviceIds(EplPlatformData *plat, EGLDeviceEXT edev, WlDeviceIds *ret_ids)
 {
     const char *extensions = plat->egl.QueryDeviceStringEXT(edev, EGL_EXTENSIONS);
-    size_t count = 0;
+    ret_ids->count = 0;
     struct stat st;
 
     if (eplFindExtension("EGL_EXT_device_drm", extensions))
@@ -308,7 +308,7 @@ size_t eplWlGetDeviceIds(EplPlatformData *plat, EGLDeviceEXT edev, dev_t ret_ids
         {
             if (stat(node, &st) == 0)
             {
-                ret_ids[count++] = st.st_rdev;
+                ret_ids->ids[ret_ids->count++] = st.st_rdev;
             }
         }
     }
@@ -320,12 +320,25 @@ size_t eplWlGetDeviceIds(EplPlatformData *plat, EGLDeviceEXT edev, dev_t ret_ids
         {
             if (stat(node, &st) == 0)
             {
-                ret_ids[count++] = st.st_rdev;
+                ret_ids->ids[ret_ids->count++] = st.st_rdev;
             }
         }
     }
 
-    return count;
+    return (ret_ids->count > 0);
+}
+
+EGLBoolean eplWlCheckDeviceId(const WlDeviceIds *ids, dev_t dev)
+{
+    size_t i;
+    for (i=0; i<ids->count; i++)
+    {
+        if (dev == ids->ids[i])
+        {
+            return EGL_TRUE;
+        }
+    }
+    return EGL_FALSE;
 }
 
 EGLDeviceEXT eplWlFindDeviceForNodeId(EplPlatformData *plat, dev_t id)
@@ -346,18 +359,14 @@ EGLDeviceEXT eplWlFindDeviceForNodeId(EplPlatformData *plat, dev_t id)
         return EGL_NO_DEVICE_EXT;
     }
 
-    for (i=0; i<num && found == EGL_NO_DEVICE_EXT; i++)
+    for (i=0; i<num; i++)
     {
-        dev_t ids[2];
-        size_t id_count = eplWlGetDeviceIds(plat, devices[i], ids);
-        size_t j;
-
-        for (j=0; j<id_count && found == EGL_NO_DEVICE_EXT; j++)
+        WlDeviceIds ids;
+        if (eplWlGetDeviceIds(plat, devices[i], &ids)
+                && eplWlCheckDeviceId(&ids, id))
         {
-            if (ids[j] == id)
-            {
-                found = devices[i];
-            }
+            found = devices[i];
+            break;
         }
     }
 

@@ -237,8 +237,7 @@ static EGLBoolean UpdateSurfaceModifiers(EplSurface *psurf, struct glvnd_list *t
     psurf->priv->current.num_surface_modifiers = 0;
 
     num = eplWlDmaBufGetSupportedModifiers(tranches,
-        psurf->priv->inst->render_device_id,
-        psurf->priv->inst->render_device_id_count,
+        &psurf->priv->inst->render_device_id,
         psurf->priv->present_fourcc,
         driver_format->modifiers,
         driver_format->num_modifiers,

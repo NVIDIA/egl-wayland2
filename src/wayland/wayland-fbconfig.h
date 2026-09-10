@@ -33,8 +33,7 @@ WlFormatList *eplWlGetDriverFormats(EplPlatformData *plat, EGLDisplay internal_d
  * \param internal_display The internal EGLDisplay handle
  * \param tranches A list of WlDmaBufFeedbackTranche structs for the dma-buf
  *      feedback data.
- * \param render_devices The device nodes for the device that we're rendering on.
- * \param render_device_count The number of elements in \c render_devices.
+ * \param render_device The device nodes for the device that we're rendering on.
  * \param driver_formats The list of formats that the driver supports, as
  *      returned by \c eplWlGetDriverFormats
  * \param allow_prime If true, then we can use PRIME, so treat pitch linear as
@@ -48,8 +47,7 @@ WlFormatList *eplWlGetDriverFormats(EplPlatformData *plat, EGLDisplay internal_d
 EplConfigList *eplWlInitConfigList(EplPlatformData *plat,
         EGLDisplay internal_display,
         struct glvnd_list *tranches,
-        const dev_t *render_devices,
-        size_t render_device_count,
+        const WlDeviceIds *render_device,
         const WlFormatList *driver_formats,
         EGLBoolean allow_prime,
         EGLBoolean from_init);

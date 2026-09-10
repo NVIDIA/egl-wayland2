@@ -104,6 +104,12 @@ struct _EplImplPlatform
     EGLBoolean timeline_funcs_supported;
 };
 
+typedef struct
+{
+    dev_t ids[2];
+    size_t count;
+} WlDeviceIds;
+
 /**
  * Finds an EGLDeviceEXT handle that corresponds to a given DRI device node.
  */
@@ -122,9 +128,11 @@ EGLDeviceEXT eplWlFindDeviceForNodeId(EplPlatformData *plat, dev_t id);
  * \param edev The EGLDeviceEXT to look up
  * \param[out] ret_ids The device node numbers for the device.
  *
- * \return The number of elements returned in ret_ids.
+ * \return True if we found at least one device ID.
  */
-size_t eplWlGetDeviceIds(EplPlatformData *plat, EGLDeviceEXT edev, dev_t ret_ids[2]);
+EGLBoolean eplWlGetDeviceIds(EplPlatformData *plat, EGLDeviceEXT edev, WlDeviceIds *ret_ids);
+
+EGLBoolean eplWlCheckDeviceId(const WlDeviceIds *ids, dev_t dev);
 
 /**
  * A wrapper around the DMA_BUF_IOCTL_IMPORT_SYNC_FILE ioctl.

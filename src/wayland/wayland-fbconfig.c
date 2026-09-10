@@ -173,8 +173,7 @@ done:
 static EGLBoolean SetupConfig(EplPlatformData *plat,
         EGLDisplay internal_display,
         struct glvnd_list *tranches,
-        const dev_t *render_devices,
-        size_t render_device_count,
+        const WlDeviceIds *render_device,
         const WlFormatList *driver_formats,
         EGLBoolean allow_prime,
         EplConfig *config)
@@ -230,8 +229,7 @@ static EGLBoolean SetupConfig(EplPlatformData *plat,
         return EGL_TRUE;
     }
 
-    num_mods = eplWlDmaBufGetSupportedModifiers(tranches,
-            render_devices, render_device_count, fourcc,
+    num_mods = eplWlDmaBufGetSupportedModifiers(tranches, render_device, fourcc,
             driver_fmt->modifiers, driver_fmt->num_modifiers,
             NULL, NULL, NULL);
     if (num_mods >= 0 || (allow_prime && num_mods == 0))
@@ -245,8 +243,7 @@ static EGLBoolean SetupConfig(EplPlatformData *plat,
 EplConfigList *eplWlInitConfigList(EplPlatformData *plat,
         EGLDisplay internal_display,
         struct glvnd_list *tranches,
-        const dev_t *render_devices,
-        size_t render_device_count,
+        const WlDeviceIds *render_device,
         const WlFormatList *driver_formats,
         EGLBoolean allow_prime,
         EGLBoolean from_init)
@@ -264,7 +261,7 @@ EplConfigList *eplWlInitConfigList(EplPlatformData *plat,
 
     for (i=0; i<configs->num_configs; i++)
     {
-        if (!SetupConfig(plat, internal_display, tranches, render_devices, render_device_count,
+        if (!SetupConfig(plat, internal_display, tranches, render_device,
                     driver_formats, allow_prime, &configs->configs[i]))
         {
             eplConfigListFree(configs);

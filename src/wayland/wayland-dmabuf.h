@@ -169,9 +169,8 @@ WlFormatList *eplWlCompileFormatList(const WlDmaBufFeedbackTableEntry *format_en
  * tranche.
  *
  * \param tranche The tranche to check.
- * \param render_devices The dev_t values for the device that will export the
+ * \param render_device The dev_t values for the device that will export the
  *      dma-bufs.
- * \param render_device_count The number of elements in \p render_devices.
  * \param fourcc The fourcc format code to check.
  * \param driver_mods The set of modifiers to check. This should be the set
  *      of modifiers that the driver supports for rendering.
@@ -189,8 +188,7 @@ WlFormatList *eplWlCompileFormatList(const WlDmaBufFeedbackTableEntry *format_en
  */
 ssize_t eplWlDmaBufGetSupportedTrancheModifiers(
         const WlDmaBufFeedbackTranche *tranche,
-        const dev_t *render_devices,
-        size_t render_device_count,
+        const WlDeviceIds *render_device,
         uint32_t fourcc,
         const uint64_t *driver_mods,
         size_t num_driver_mods,
@@ -204,9 +202,8 @@ ssize_t eplWlDmaBufGetSupportedTrancheModifiers(
  * returns the first tranche that supports anything.
  *
  * \param tranches A linked list of WlDmaBufFeedbackTranche structs.
- * \param render_devices The dev_t values for the device that will export the
+ * \param render_device The dev_t values for the device that will export the
  *      dma-bufs.
- * \param render_device_count The number of elements in \p render_devices.
  * \param fourcc The fourcc format code to check.
  * \param driver_mods The set of modifiers to check. This should be the set
  *      of modifiers that the driver supports for rendering.
@@ -225,8 +222,7 @@ ssize_t eplWlDmaBufGetSupportedTrancheModifiers(
  *      doesn't support pitch linear, then returns -1.
  */
 ssize_t eplWlDmaBufGetSupportedModifiers(struct glvnd_list *tranches,
-        const dev_t *render_devices,
-        size_t render_device_count,
+        const WlDeviceIds *render_device,
         uint32_t fourcc,
         const uint64_t *driver_mods,
         size_t num_driver_mods,

@@ -443,6 +443,15 @@ static void WindowUpdateCallback(void *param)
     EplSurface *psurf = param;
     WlSwapChain *swapchain = NULL;
 
+    /*
+     * Poll for any pending events, so that we have up-to-date feedback data.
+     * Note that we won't reallocate the swapchain just to change modifiers
+     * here (we'll only do that in eglSwapBuffers), but if we have to
+     * reallocate anyway due to a resize, then we should use the updated
+     * feedback.
+     */
+    wl_display_dispatch_queue_pending(psurf->priv->inst->wdpy, psurf->priv->current.queue);
+
     pthread_mutex_lock(&psurf->priv->params.mutex);
     if (psurf->priv->params.skip_update_callback != 0
             || psurf->priv->params.native_window == NULL)

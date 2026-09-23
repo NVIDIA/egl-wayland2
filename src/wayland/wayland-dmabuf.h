@@ -27,7 +27,7 @@
 #include <drm_fourcc.h>
 #include <wayland-client-core.h>
 
-#include "linux-dmabuf-unstable-v1-client-protocol.h"
+#include "linux-dmabuf-v1-client-protocol.h"
 
 #include "wayland-platform.h"
 #include "config-list.h"

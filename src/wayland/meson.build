@@ -18,10 +18,10 @@ dep_wayland_client = dependency('wayland-client')
 dep_dl = meson.get_compiler('c').find_library('dl', required : false)
 dep_wayland_egl_backend = dependency('wayland-egl-backend', version : ['>=3'])
 
-wl_protos = dependency('wayland-protocols', version: '>= 1.38')
+wl_protos = dependency('wayland-protocols', version: '>= 1.49')
 wl_protos_dir = wl_protos.get_variable('pkgdatadir')
 wl_drm_xml = 'wayland-drm.xml'
-wl_dmabuf_xml = join_paths(wl_protos_dir, 'unstable', 'linux-dmabuf', 'linux-dmabuf-unstable-v1.xml')
+wl_dmabuf_xml = join_paths(wl_protos_dir, 'stable', 'linux-dmabuf', 'linux-dmabuf-v1.xml')
 wl_drm_syncobj_xml = join_paths(wl_protos_dir, 'staging', 'linux-drm-syncobj', 'linux-drm-syncobj-v1.xml')
 wp_presentation_xml = join_paths(wl_protos_dir, 'stable', 'presentation-time', 'presentation-time.xml')
 wp_fifo_xml = join_paths(wl_protos_dir, 'staging', 'fifo', 'fifo-v1.xml')

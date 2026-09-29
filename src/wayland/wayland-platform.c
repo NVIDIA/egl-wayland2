@@ -21,6 +21,7 @@
 #include <string.h>
 #include <dlfcn.h>
 #include <errno.h>
+#include <sys/stat.h>
 #include <assert.h>
 
 #include "wayland-display.h"
@@ -288,6 +289,84 @@ EGLDeviceEXT eplWlFindDeviceForNode(EplPlatformData *plat, const char *node)
                 found = devices[i];
                 break;
             }
+        }
+    }
+
+    return found;
+}
+
+EGLBoolean eplWlGetDeviceIds(EplPlatformData *plat, EGLDeviceEXT edev, WlDeviceIds *ret_ids)
+{
+    const char *extensions = plat->egl.QueryDeviceStringEXT(edev, EGL_EXTENSIONS);
+    ret_ids->count = 0;
+    struct stat st;
+
+    if (eplFindExtension("EGL_EXT_device_drm", extensions))
+    {
+        const char *node = plat->egl.QueryDeviceStringEXT(edev, EGL_DRM_DEVICE_FILE_EXT);
+        if (node != NULL)
+        {
+            if (stat(node, &st) == 0)
+            {
+                ret_ids->ids[ret_ids->count++] = st.st_rdev;
+            }
+        }
+    }
+
+    if (eplFindExtension("EGL_EXT_device_drm_render_node", extensions))
+    {
+        const char *node = plat->egl.QueryDeviceStringEXT(edev, EGL_DRM_RENDER_NODE_FILE_EXT);
+        if (node != NULL)
+        {
+            if (stat(node, &st) == 0)
+            {
+                ret_ids->ids[ret_ids->count++] = st.st_rdev;
+            }
+        }
+    }
+
+    return (ret_ids->count > 0);
+}
+
+EGLBoolean eplWlCheckDeviceId(const WlDeviceIds *ids, dev_t dev)
+{
+    size_t i;
+    for (i=0; i<ids->count; i++)
+    {
+        if (dev == ids->ids[i])
+        {
+            return EGL_TRUE;
+        }
+    }
+    return EGL_FALSE;
+}
+
+EGLDeviceEXT eplWlFindDeviceForNodeId(EplPlatformData *plat, dev_t id)
+{
+    EGLDeviceEXT *devices = NULL;
+    EGLDeviceEXT found = EGL_NO_DEVICE_EXT;
+    EGLint num = 0;
+    int i;
+
+    if (!plat->egl.QueryDevicesEXT(0, NULL, &num) || num <= 0)
+    {
+        return EGL_NO_DEVICE_EXT;
+    }
+
+    devices = alloca(num * sizeof(EGLDeviceEXT));
+    if (!plat->egl.QueryDevicesEXT(num, devices, &num) || num <= 0)
+    {
+        return EGL_NO_DEVICE_EXT;
+    }
+
+    for (i=0; i<num; i++)
+    {
+        WlDeviceIds ids;
+        if (eplWlGetDeviceIds(plat, devices[i], &ids)
+                && eplWlCheckDeviceId(&ids, id))
+        {
+            found = devices[i];
+            break;
         }
     }
 

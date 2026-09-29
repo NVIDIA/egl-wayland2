@@ -74,11 +74,6 @@ typedef struct
     } globals;
 
     /**
-     * The set of formats and modifiers that the server supports.
-     */
-    WlFormatList *default_feedback;
-
-    /**
      * The set of formats and modifiers that the driver supports.
      */
     WlFormatList *driver_formats;
@@ -96,8 +91,29 @@ typedef struct
      * This is an array so that it contains both the primary and render
      * devices.
      */
-    dev_t render_device_id[2];
-    size_t render_device_id_count;
+    WlDeviceIds render_device_id;
+
+    /**
+     * The default dma-buf feedback data that we received when eglInitialize
+     * was called.
+     *
+     * This is the data used to select a rendering device, and to decide which
+     * EGLConfigs can support windows. It's also used as a fallback if the
+     * server sends back unusable parameters for per-surface feedback.
+     *
+     * Note that we don't keep listening for default feedback events after
+     * the first batch, so this data is immutable after eglInitialize finishes.
+     *
+     * We can't change the rendering device or the EGLConfig list for an
+     * initialized EGLDisplay, so we just have to assume that whatever was
+     * valid when eglInitialize was called remains valid.
+     *
+     * If that assumption doesn't hold, then swapchain allocation will fail
+     * when it tries to create a wl_buffer from a dma-buf. There's still not
+     * much we can do about that, though, other than letting
+     * eglCreateWindowSurface and eglSwapBuffers fail.
+     */
+    struct glvnd_list default_feedback_tranches;
 
     /**
      * The clock ID for the wp_presentation protocol.
@@ -110,14 +126,9 @@ typedef struct
     EGLBoolean supports_EGL_ANDROID_native_fence_sync;
 
     /**
-     * True if we can use implicit sync.
+     * True if implicit sync is disabled.
      */
-    EGLBoolean supports_implicit_sync;
-
-    /**
-     * True if we always to use PRIME.
-     */
-    EGLBoolean force_prime;
+    EGLBoolean implicit_sync_disabled;
 
     /**
      * The EGL_EXTENSIONS string for this display.

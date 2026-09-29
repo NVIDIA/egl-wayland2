@@ -125,7 +125,8 @@ static const struct zwp_linux_buffer_params_v1_listener DMABUF_PARAMS_LISTENER =
  */
 static struct wl_buffer *ShareDmaBuf(WlDisplayInstance *inst,
         struct wl_event_queue *queue, int dmabuf, uint32_t width, uint32_t height,
-        uint32_t stride, uint32_t offset, uint32_t fourcc, uint64_t modifier)
+        uint32_t stride, uint32_t offset, uint32_t fourcc, uint64_t modifier,
+        dev_t sampling_device)
 {
     DmaBufParamsCreateState state = {};
     struct zwp_linux_dmabuf_v1 *wrapper = NULL;
@@ -149,6 +150,15 @@ static struct wl_buffer *ShareDmaBuf(WlDisplayInstance *inst,
     // don't need to duplicate it here.
     zwp_linux_buffer_params_v1_add(params, dmabuf, 0, (uint32_t) offset, (uint32_t) stride,
             (uint32_t) (modifier >> 32), (uint32_t) (modifier & 0xFFFFFFFF));
+
+    if (wl_proxy_get_version((struct wl_proxy *) inst->globals.dmabuf)
+            >= ZWP_LINUX_BUFFER_PARAMS_V1_SET_SAMPLING_DEVICE_SINCE_VERSION)
+    {
+        struct wl_array dev = {};
+        dev.data = &sampling_device;
+        dev.size = sizeof(sampling_device);
+        zwp_linux_buffer_params_v1_set_sampling_device(params, &dev);
+    }
 
     zwp_linux_buffer_params_v1_create(params, width, height, fourcc, 0);
 
@@ -212,7 +222,8 @@ static WlPresentBuffer *SwapChainAppendPresentBuffer(WlDisplayInstance *inst,
     }
 
     buf->wbuf = ShareDmaBuf(inst, swapchain->queue, dmabuf, swapchain->width, swapchain->height,
-            stride, offset, swapchain->present_fourcc, swapchain->modifier);
+            stride, offset, swapchain->present_fourcc, swapchain->modifier,
+            swapchain->sampling_device);
     if (buf->wbuf == NULL)
     {
         DestroyPresentBuffer(inst, buf);
@@ -231,7 +242,7 @@ static WlPresentBuffer *SwapChainAppendPresentBuffer(WlDisplayInstance *inst,
         // wl_buffer::release events.
         wl_buffer_add_listener(buf->wbuf, &BUFFER_LISTENER, swapchain);
 
-        if (!inst->supports_implicit_sync)
+        if (!swapchain->supports_implicit_sync)
         {
             // If we don't have implicit sync either, then we don't have any
             // reason to keep the dma-buf open.
@@ -315,13 +326,15 @@ void eplWlSwapChainDestroy(WlDisplayInstance *inst, WlSwapChain *swapchain)
 
 WlSwapChain *eplWlSwapChainCreate(WlDisplayInstance *inst, struct wl_surface *wsurf,
         uint32_t width, uint32_t height, uint32_t render_fourcc, uint32_t present_fourcc,
-        EGLBoolean prime, const uint64_t *modifiers, size_t num_modifiers)
+        EGLBoolean prime, dev_t sampling_device, const uint64_t *modifiers, size_t num_modifiers)
 {
     WlSwapChain *swapchain = NULL;
     uint32_t flags = 0;
     struct gbm_bo *gbo = NULL;
     int dmabuf = -1;
     EGLBoolean success = EGL_FALSE;
+
+    assert(prime || eplWlCheckDeviceId(&inst->render_device_id, sampling_device));
 
     swapchain = calloc(1, sizeof(WlSwapChain));
     if (swapchain == NULL)
@@ -336,6 +349,7 @@ WlSwapChain *eplWlSwapChainCreate(WlDisplayInstance *inst, struct wl_surface *ws
     swapchain->present_fourcc = present_fourcc;
     swapchain->modifier = DRM_FORMAT_MOD_INVALID;
     swapchain->prime = prime;
+    swapchain->sampling_device = sampling_device;
     if (inst->platform->priv->wl.display_create_queue_with_name != NULL)
     {
         char name[64];
@@ -351,11 +365,22 @@ WlSwapChain *eplWlSwapChainCreate(WlDisplayInstance *inst, struct wl_surface *ws
         goto done;
     }
 
+    if (prime && inst->globals.syncobj == NULL && !inst->implicit_sync_disabled)
+    {
+        // If we don't have explicit sync, then figure out if we can use
+        // implicit sync.
+
+        if (eplWlFindDeviceForNodeId(inst->platform, sampling_device) == EGL_NO_DEVICE_EXT)
+        {
+            swapchain->supports_implicit_sync = EGL_TRUE;
+        }
+    }
+
     /*
      * Start by creating the render buffer. We'll do that using libgbm, so that
      * we can let the driver pick an optimal format modifier.
      *
-     * After that, we can just eglPlatformAllocColorBufferNVX, and pass it the
+     * After that, we can just use eglPlatformAllocColorBufferNVX, and pass it the
      * same modifier as the first buffer we created.
      */
 
@@ -601,8 +626,6 @@ static EGLBoolean WaitImplicitFence(WlDisplayInstance *inst, WlPresentBuffer *bu
     EGLBoolean success = EGL_FALSE;
     int fd = -1;
 
-    assert(inst->supports_implicit_sync);
-
     fd = eplWlExportDmaBufSyncFile(buffer->dmabuf);
     if (fd >= 0)
     {
@@ -650,7 +673,7 @@ static int CheckBufferReleaseImplicit(WlDisplayInstance *inst,
     {
         if (buffer->status == BUFFER_STATUS_IDLE_NOTIFIED)
         {
-            if (buffer->dmabuf >= 0 && inst->supports_implicit_sync)
+            if (buffer->dmabuf >= 0 && swapchain->supports_implicit_sync)
             {
                 if (WaitImplicitFence(inst, buffer))
                 {
@@ -678,7 +701,7 @@ static int CheckBufferReleaseImplicit(WlDisplayInstance *inst,
 
     // Sanity check: If implicit sync isn't available, then we should never
     // have incremented count above.
-    assert(inst->supports_implicit_sync);
+    assert(swapchain->supports_implicit_sync);
 
     buffers = alloca(count * sizeof(WlPresentBuffer *));
     fds = alloca(count * sizeof(struct pollfd));
@@ -804,6 +827,72 @@ WlPresentBuffer *eplWlSwapChainFindFreePresentBuffer(WlDisplayInstance *inst,
     }
 }
 
+EGLBoolean eplWlSwapChainSyncRendering(WlDisplayInstance *inst,
+        WlSwapChain *swapchain, WlPresentBuffer *present_buf)
+{
+    EGLSync sync = EGL_NO_SYNC;
+    int syncFd = -1;
+    EGLBoolean success = EGL_FALSE;
+
+    if (!inst->supports_EGL_ANDROID_native_fence_sync)
+    {
+        // If we don't have EGL_ANDROID_native_fence_sync, then we can't do
+        // anything other than a glFinish here.
+        assert(present_buf->timeline.wtimeline == NULL);
+        inst->platform->priv->egl.Finish();
+        return EGL_TRUE;
+    }
+
+    sync = inst->platform->priv->egl.CreateSync(inst->internal_display->edpy,
+            EGL_SYNC_NATIVE_FENCE_ANDROID, NULL);
+    if (sync == EGL_NO_SYNC)
+    {
+        goto done;
+    }
+    inst->platform->priv->egl.Flush();
+
+    syncFd = inst->platform->priv->egl.DupNativeFenceFDANDROID(inst->internal_display->edpy, sync);
+    if (syncFd < 0)
+    {
+        goto done;
+    }
+
+    if (present_buf->timeline.wtimeline != NULL)
+    {
+        /*
+         * We've got explicit sync available, so plug the syncfd into the next
+         * timeline point.
+         *
+         * We let the caller send the set_acquire/release_point requests,
+         * though. That makes it easier to ensure that the sync requests are
+         * always sent alongside attach and commit requests.
+         */
+        success = eplWlTimelineAttachSyncFD(inst, &present_buf->timeline, syncFd);
+    }
+    else
+    {
+        // Attach an implicit sync fence if we can. If we can't, then fall back
+        // to a CPU wait.
+        if (present_buf->dmabuf < 0 || !swapchain->supports_implicit_sync
+                || !eplWlImportDmaBufSyncFile(present_buf->dmabuf, syncFd))
+        {
+            inst->platform->priv->egl.Finish();
+        }
+        success = EGL_TRUE;
+    }
+
+done:
+    if (sync != EGL_NO_SYNC)
+    {
+        inst->platform->priv->egl.DestroySync(inst->internal_display->edpy, sync);
+    }
+    if (syncFd >= 0)
+    {
+        close(syncFd);
+    }
+    return success;
+}
+
 void eplWlSwapChainUpdateBufferAge(WlDisplayInstance *inst, WlSwapChain *swapchain,
         WlPresentBuffer *presented_buffer)
 {
@@ -827,3 +916,4 @@ void eplWlSwapChainUpdateBufferAge(WlDisplayInstance *inst, WlSwapChain *swapcha
 
     presented_buffer->buffer_age = 1;
 }
+

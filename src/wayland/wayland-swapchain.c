@@ -128,8 +128,26 @@ static struct wl_buffer *ShareDmaBuf(WlDisplayInstance *inst,
         uint32_t stride, uint32_t offset, uint32_t fourcc, uint64_t modifier)
 {
     DmaBufParamsCreateState state = {};
+    struct wl_event_queue *local_queue = NULL;
     struct zwp_linux_dmabuf_v1 *wrapper = NULL;
     struct zwp_linux_buffer_params_v1 *params = NULL;
+
+    if (queue == NULL)
+    {
+        /*
+         * When we're using explicit sync, we don't care about
+         * wl_buffer::release events, so we don't have a persistent event queue
+         * for the swapchain. Create a temporary one for the
+         * zwp_linux_buffer_params_v1 events.
+         */
+        local_queue = wl_display_create_queue(inst->wdpy);
+        if (local_queue == NULL)
+        {
+            goto done;
+        }
+
+        queue = local_queue;
+    }
 
     wrapper = wl_proxy_create_wrapper(inst->globals.dmabuf);
     if (wrapper == NULL)
@@ -168,6 +186,16 @@ done:
     if (wrapper != NULL)
     {
         wl_proxy_wrapper_destroy(wrapper);
+    }
+    if (local_queue != NULL)
+    {
+        // Set the wl_buffer to the display's queue, so that we can destroy our
+        // temporary event queue.
+        if (state.buffer != NULL)
+        {
+            wl_proxy_set_queue((struct wl_proxy *) state.buffer, NULL);
+        }
+        wl_event_queue_destroy(local_queue);
     }
 
     return state.buffer;
@@ -336,19 +364,26 @@ WlSwapChain *eplWlSwapChainCreate(WlDisplayInstance *inst, struct wl_surface *ws
     swapchain->present_fourcc = present_fourcc;
     swapchain->modifier = DRM_FORMAT_MOD_INVALID;
     swapchain->prime = prime;
-    if (inst->platform->priv->wl.display_create_queue_with_name != NULL)
+    if (inst->globals.syncobj == NULL)
     {
-        char name[64];
-        snprintf(name, sizeof(name), "EGLSurface(%u/%p)", wl_proxy_get_id((struct wl_proxy *) wsurf), swapchain);
-        swapchain->queue = inst->platform->priv->wl.display_create_queue_with_name(inst->wdpy, name);
-    }
-    else
-    {
-        swapchain->queue = wl_display_create_queue(inst->wdpy);
-    }
-    if (swapchain->queue == NULL)
-    {
-        goto done;
+        /*
+         * If we don't have explicit sync, then we'll need an event queue to
+         * receive wl_buffer::release events.
+         */
+        if (inst->platform->priv->wl.display_create_queue_with_name != NULL)
+        {
+            char name[64];
+            snprintf(name, sizeof(name), "EGLSurface(%u/%p)", wl_proxy_get_id((struct wl_proxy *) wsurf), swapchain);
+            swapchain->queue = inst->platform->priv->wl.display_create_queue_with_name(inst->wdpy, name);
+        }
+        else
+        {
+            swapchain->queue = wl_display_create_queue(inst->wdpy);
+        }
+        if (swapchain->queue == NULL)
+        {
+            goto done;
+        }
     }
 
     /*

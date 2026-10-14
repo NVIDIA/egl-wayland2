@@ -28,6 +28,7 @@
 #include "presentation-time-client-protocol.h"
 #include "commit-timing-v1-client-protocol.h"
 #include "fifo-v1-client-protocol.h"
+#include "tearing-control-v1-client-protocol.h"
 
 /**
  * Contains data for an initialized EGLDisplay.
@@ -71,6 +72,7 @@ typedef struct
         struct wp_presentation *presentation_time;
         struct wp_fifo_manager_v1 *fifo;
         struct wp_commit_timing_manager_v1 *commit_timing;
+        struct wp_tearing_control_manager_v1 *tearing_control;
     } globals;
 
     /**

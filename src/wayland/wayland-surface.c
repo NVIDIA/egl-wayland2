@@ -167,6 +167,7 @@ struct _EplImplSurface
 
         struct wp_fifo_v1 *fifo;
         struct wp_commit_timer_v1 *commit_timer;
+        struct wp_tearing_control_v1 *tearing_control;
 
         /**
          * The timestamp of the last wp_presentation_feedback::presented or
@@ -214,6 +215,8 @@ struct _EplImplSurface
          * to actually render anything.
          */
         EGLBoolean force_realloc;
+
+        EGLBoolean can_tear;
     } current;
 
     /**
@@ -969,6 +972,11 @@ EGLSurface eplWlCreateWindowSurface(EplPlatformData *plat, EplDisplay *pdpy, Epl
                 goto done;
             }
         }
+
+        if (inst->globals.tearing_control != NULL)
+        {
+            priv->current.tearing_control = wp_tearing_control_manager_v1_get_tearing_control(inst->globals.tearing_control, priv->current.wsurf);
+        }
     }
 
     // Initialize the modifier list based on the default modifiers.
@@ -1672,6 +1680,17 @@ EplQueryResult eplWlQuerySurface(EplDisplay *pdpy, EplSurface *psurf, EGLint att
         {
             *ret_value = psurf->priv->current.swapchain->current_back->buffer_age;
         }
+        return EPL_QUERY_RESULT_SUCCESS;
+    }
+    // TODO
+    else if (attrib == 0x3600 && psurf->current.tearing_control)
+    {
+        if (psurf->priv->current.can_tear) {
+          *ret_value = 0x3601;
+        } else {
+          *ret_value = 0x3602;
+        }
+
         return EPL_QUERY_RESULT_SUCCESS;
     }
     else

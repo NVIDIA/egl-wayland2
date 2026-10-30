@@ -1347,6 +1347,18 @@ static EGLBoolean HookQuerySurface(EGLDisplay edpy, EGLSurface esurf, EGLint att
             }
         }
 
+        // TODO
+        if (attribute == 0x3600)
+        {
+            // Querying EGL_SWAP_TEARING_HINT_EXT is only valid for the current
+            // EGLSurface.
+            if (pdpy->platform->egl.GetCurrentSurface(EGL_DRAW) != esurf)
+            {
+                eplSetError(pdpy->platform, EGL_BAD_SURFACE, "EGLSurface %p is not current", esurf);
+                goto done;
+            }
+        }
+
         if (pdpy->platform->impl->QuerySurface != NULL)
         {
             result = pdpy->platform->impl->QuerySurface(pdpy, psurf, attribute, value);

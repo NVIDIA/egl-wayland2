@@ -38,6 +38,7 @@ static const uint32_t PROTO_DRM_VERSION[2] = { 1, 1 };
 static const uint32_t PROTO_PRESENTATION_TIME_VERSION[2] = { 1, 2 };
 static const uint32_t PROTO_FIFO_VERSION[2] = { 1, 1 };
 static const uint32_t PROTO_COMMIT_TIMING_VERSION[2] = { 1, 1 };
+static const uint32_t PROTO_TEARING_CONTROL_VERSION[2] = { 1, 1 };
 
 typedef struct
 {
@@ -64,6 +65,7 @@ typedef struct
     WlDisplayGlobalName wp_presentation;
     WlDisplayGlobalName wp_fifo_manager_v1;
     WlDisplayGlobalName wp_commit_timing_manager_v1;
+    WlDisplayGlobalName wp_tearing_control_manager_v1;
     WlDisplayGlobalName wl_drm;
 } WlDisplayRegistry;
 
@@ -390,6 +392,7 @@ static void onRegistryGlobal(void *userdata, struct wl_registry *wl_registry,
     CHECK_INTERFACE(wp_presentation, PROTO_PRESENTATION_TIME_VERSION);
     CHECK_INTERFACE(wp_fifo_manager_v1, PROTO_FIFO_VERSION);
     CHECK_INTERFACE(wp_commit_timing_manager_v1, PROTO_COMMIT_TIMING_VERSION);
+    CHECK_INTERFACE(wp_tearing_control_manager_v1, PROTO_TEARING_CONTROL_VERSION);
 #undef CHECK_INTERFACE
 }
 static void OnRegistryGlobalRemove(void *data, struct wl_registry *wl_registry, uint32_t name)
@@ -1069,6 +1072,14 @@ WlDisplayInstance *eplWlDisplayInstanceCreate(EplDisplay *pdpy, EGLBoolean from_
                 &wp_linux_drm_syncobj_manager_v1_interface,
                 names.wp_linux_drm_syncobj_manager_v1.version,
                 NULL);
+    }
+
+    if (names.wp_tearing_control_manager_v1.name != 0)
+    {
+        inst->globals.tearing_control = BindGlobalObject(names.registry,
+                names.wp_tearing_control_manager_v1.name,
+                &wp_tearing_control_manager_v1_interface,
+                names.wp_tearing_control_manager_v1.version, queue);
     }
 
     if (names.wp_presentation.name != 0

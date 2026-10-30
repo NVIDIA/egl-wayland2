@@ -342,9 +342,9 @@ typedef struct _EplImplFuncs
      * act as if the platform returned EPL_QUERY_RESULT_UNKNOWN.
      *
      * Note that the base library handles the error checking for
-     * EGL_EXT_buffer_age and EGL_KHR_partial_update internally. If \p attrib
-     * is \c EGL_BUFFER_AGE_KHR, then the platform can assume that the surface
-     * is current.
+     * EGL_EXT_buffer_age, EGL_KHR_partial_update, and EGL_EXT_swap_tearing_hint
+     * internally. If \p attrib is \c EGL_BUFFER_AGE_KHR or \c EGL_SWAP_TEARING_HINT_EXT,
+     * then the platform can assume that the surface is current.
      *
      * \param pdpy The current display.
      * \param psurf The current draw surface. This will never be NULL.

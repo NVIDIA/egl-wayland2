@@ -104,6 +104,12 @@ struct _EplImplPlatform
     EGLBoolean timeline_funcs_supported;
 };
 
+/**
+ * Keeps track of the device nodes for a device.
+ *
+ * This struct can hold two dev_t values, so that we can record both the
+ * primary and render nodes for a device.
+ */
 typedef struct
 {
     dev_t ids[2];

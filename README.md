@@ -11,7 +11,7 @@ See [Implementation Notes](#implementation-notes) for more details.
 This library depends on:
 - libgbm, version 21.2.0
 - libdrm, version 2.4.99
-- wayland-protocols, version 1.38 (https://gitlab.freedesktop.org/wayland/wayland-protocols)
+- wayland-protocols, version 1.49 (https://gitlab.freedesktop.org/wayland/wayland-protocols)
 - libwayland-client and wayland-scanner (https://gitlab.freedesktop.org/wayland/wayland)
 - EGL headers (https://www.khronos.org/registry/EGL)
 - EGL External Platform interface, version 1.2 (https://github.com/NVIDIA/eglexternalplatform)

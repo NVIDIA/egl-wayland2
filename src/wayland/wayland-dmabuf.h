@@ -27,7 +27,7 @@
 #include <drm_fourcc.h>
 #include <wayland-client-core.h>
 
-#include "linux-dmabuf-unstable-v1-client-protocol.h"
+#include "linux-dmabuf-v1-client-protocol.h"
 
 #include "wayland-platform.h"
 #include "config-list.h"
@@ -70,91 +70,165 @@ typedef struct
 } WlDmaBufFeedbackTableEntry;
 
 /**
- * A common struct for handling dma-buf feedback data.
+ * Keeps track of feedback data from a \c zwp_linux_dmabuf_feedback_v1.
  *
- * This is used by the common handlers for default and per-surface feedback.
+ * This object keeps track of all of the dma-buf feedback data as it arrives.
+ *
+ * When we get a \c zwp_linux_dmabuf_feedback_v1::done event, we compile the
+ * data into a list of \c WlDmaBufFeedbackTranche structs, and pass them to a
+ * callback function.
+ *
+ * Internally, this will handle different versions of the dma-buf protocol, and
+ * will translate data from older versions to the equivalent data in version 6.
+ *
+ * However, versions 3 and lower don't use the feedback protocol at all, so that
+ * will require special handling for getting the default feedback.
+ */
+typedef struct WlDmaBufFeedbackRec WlDmaBufFeedback;
+
+/**
+ * Data for each tranche of dma-buf feedback.
  */
 typedef struct
 {
-    /// The current format table.
-    WlDmaBufFeedbackTableEntry *format_table;
-    size_t format_table_len;
+    /**
+     * The target device.
+     */
+    dev_t target_device;
 
-    dev_t main_device;
+    /**
+     * The tranche flags.
+     *
+     * This will include the SAMPLING flag, even on older version of the
+     * dma-buf protocol. For v4 and v5, we'll set the SAMPLING flag based on
+     * the \c main_device event.
+     */
+    uint32_t flags;
 
-    /// The target device for the current tranche.
-    dev_t tranche_target_device;
+    /**
+     * The set of formats and modifiers that this tranche listed.
+     */
+    WlFormatList *formats;
 
-    /// The flags for the current tranche.
-    uint32_t tranche_flags;
-
-    /// If true, then we ran into a malloc failure or some other error along the way.
-    EGLBoolean error;
-} WlDmaBufFeedbackCommon;
-
-void eplWlDmaBufFeedbackCommonInit(WlDmaBufFeedbackCommon *base);
-void eplWlDmaBufFeedbackCommonCleanup(WlDmaBufFeedbackCommon *base);
+    struct glvnd_list entry;
+} WlDmaBufFeedbackTranche;
 
 /**
- * Called for a zwp_linux_dmabuf_feedback_v1::done event.
+ * A callback function to handle a new batch of dma-buf feedback.
  *
- * This just clears any data to get ready for the next update, so it should be
- * called after the caller processes whatever data is there.
- */
-void eplWlDmaBufFeedbackCommonDone(WlDmaBufFeedbackCommon *base);
-
-/**
- * Called for a zwp_linux_dmabuf_feedback_v1::tranche_done event.
+ * After the callback, all elements in \p tranches will be freed. If the
+ * callback wants to store the tranche data, then it can remove any entries it
+ * needs from the list before returning.
  *
- * This just clears any data to get ready for the next tranche, so it should be
- * called after the caller processes whatever data is there.
+ * \param feedback The WlDmaBufFeedback struct
+ * \param tranches A list of \c WlDmaBufFeedbackTranche structs
+ * \param param The callback parameter passed to \c eplWlDmaBufFeedbackInit.
  */
-void eplWlDmaBufFeedbackCommonTrancheDone(WlDmaBufFeedbackCommon *base);
+typedef void (* WlDmaBufFeedbackCallback) (WlDmaBufFeedback *feedback,
+        struct glvnd_list *tranches, void *param);
 
 /**
- * Handles a zwp_linux_dmabuf_feedback_v1::format_table event.
+ * Sets up a listener to process dma-buf feedback.
+ *
+ * \param plat The platform struct.
+ * \param wfeedback The feedback proxy.
+ * \param callback The callback function to call after each complete batch of
+ *      feedback.
+ * \param param A parameter to pass through to \p callback.
+ * \return A new WlDmaBufFeedback pointer, or NULL on failure.
  */
-void eplWlDmaBufFeedbackCommonFormatTable(void *userdata,
-        struct zwp_linux_dmabuf_feedback_v1 *zwp_linux_dmabuf_feedback_v1,
-        int32_t fd, uint32_t size);
-
-void eplWlDmaBufFeedbackCommonMainDevice(void *userdata,
+WlDmaBufFeedback *eplWlDmaBufFeedbackInit(EplPlatformData *plat,
         struct zwp_linux_dmabuf_feedback_v1 *wfeedback,
-        struct wl_array *device);
-
-void eplWlDmaBufFeedbackCommonTrancheTargetDevice(void *userdata,
-        struct zwp_linux_dmabuf_feedback_v1 *wfeedback,
-        struct wl_array *device);
-
-void eplWlDmaBufFeedbackCommonTrancheFlags(void *userdata,
-        struct zwp_linux_dmabuf_feedback_v1 *wfeedback,
-        uint32_t flags);
+        WlDmaBufFeedbackCallback callback, void *param);
 
 /**
- * Returns the default dma-buf feedback data.
+ * Cleans up a WlDmaBufFeedback.
  *
- * If the \c zwp_linux_dmabuf_v1 is version 3, then this will instead use the old
- * events on the \c zwp_linux_dmabuf_v1 itself to get a format and modifier
- * list. In that case, it will return zero for \p main_device fields will be
- * zero.
- *
- * For version 4 or later, this will use a \c zwp_linux_dmabuf_feedback_v1 to
- * get the default feedback data. It will return a combined format list for all
- * of the tranches for the main device, and ignore any tranches that apply to
- * any other devices.
- *
- * \param wdpy The display connection
- * \param wdmabuf The \c zwp_linux_dmabuf_v1 proxy
- * \param queue The event queue associated with \p wdmabuf. Note that this is
- *      only used for version 3. For version 4, the zwp_linux_dmabuf_feedback_v1
- *      gets its own event queue.
- * \return A new \c WlFormatList object, or NULL on error. The caller
- *      must free it using \c eplWlFormatListFree.
+ * \param feedback The feedback struct to clean up.
+ * \param display_valid True if the wl_display is still valid.
  */
-WlFormatList *eplWlDmaBufFeedbackGetDefault(struct wl_display *wdpy,
-        struct zwp_linux_dmabuf_v1 *wdmabuf,
-        struct wl_event_queue *queue,
-        dev_t *ret_main_device);
+void eplWlDmaBufFeedbackDestroy(WlDmaBufFeedback *feedback);
+
+/**
+ * Frees a single WlDmaBufFeedbackTranche object.
+ */
+void eplWlDmaBufFeedbackTrancheFree(WlDmaBufFeedbackTranche *tranche);
+
+/**
+ * Frees a list of WlDmaBufFeedbackTranche objects.
+ */
+void eplWlDmaBufFeedbackTrancheFreeList(struct glvnd_list *tranches);
+
+/**
+ * Converts an array of WlDmaBufFeedbackTableEntry into a WlFormatList.
+ */
+WlFormatList *eplWlCompileFormatList(const WlDmaBufFeedbackTableEntry *format_entries, size_t count);
+
+/**
+ * Figures out which modifiers are supported by a single dma-buf feedback
+ * tranche.
+ *
+ * \param tranche The tranche to check.
+ * \param render_device The dev_t values for the device that will export the
+ *      dma-bufs.
+ * \param fourcc The fourcc format code to check.
+ * \param driver_mods The set of modifiers to check. This should be the set
+ *      of modifiers that the driver supports for rendering.
+ * \param num_driver_mods The number of elements in the \p driver_mods and
+ *      \p ret_supported_mods arrays.
+ * \param[out] ret_supported_mods Returns the subset of \p driver_mods that the
+ *      server supports.
+ * \param[out] ret_supports_linear Returns true if the server can accept a
+ *      pitch linear buffer.
+ *
+ * \return The number of modifiers in \p driver_mods that the server supports.
+ *      If none of them are supported, but the server supports pitch linear,
+ *      then returns zero. If the server doesn't support any modifiers, and
+ *      doesn't support pitch linear, then returns -1.
+ */
+ssize_t eplWlDmaBufGetSupportedTrancheModifiers(
+        const WlDmaBufFeedbackTranche *tranche,
+        const WlDeviceIds *render_device,
+        uint32_t fourcc,
+        const uint64_t *driver_mods,
+        size_t num_driver_mods,
+        uint64_t *ret_supported_mods,
+        EGLBoolean *ret_supports_linear);
+
+/**
+ * Figures out which modifiers are supported by the server.
+ *
+ * This is just a wrapper around eplWlDmaBufGetSupportedTrancheModifiers, which
+ * returns the first tranche that supports anything.
+ *
+ * \param tranches A linked list of WlDmaBufFeedbackTranche structs.
+ * \param render_device The dev_t values for the device that will export the
+ *      dma-bufs.
+ * \param fourcc The fourcc format code to check.
+ * \param driver_mods The set of modifiers to check. This should be the set
+ *      of modifiers that the driver supports for rendering.
+ * \param num_driver_mods The number of elements in the \p driver_mods and
+ *      \p ret_supported_mods arrays.
+ * \param[out] ret_supported_mods Returns the subset of \p driver_mods that the
+ *      server supports.
+ * \param[out] ret_supports_linear Returns true if the server can accept a
+ *      pitch linear buffer.
+ * \param[out] ret_sampling_device Returns the dev_t for the node that should
+ *      be set as the sampling device.
+ *
+ * \return The number of modifiers in \p driver_mods that the server supports.
+ *      If none of them are supported, but the server supports pitch linear,
+ *      then returns zero. If the server doesn't support any modifiers, and
+ *      doesn't support pitch linear, then returns -1.
+ */
+ssize_t eplWlDmaBufGetSupportedModifiers(struct glvnd_list *tranches,
+        const WlDeviceIds *render_device,
+        uint32_t fourcc,
+        const uint64_t *driver_mods,
+        size_t num_driver_mods,
+        uint64_t *ret_supported_mods,
+        EGLBoolean *ret_supports_linear,
+        dev_t *ret_sampling_device);
 
 void eplWlFormatListFree(WlFormatList *data);
 

@@ -26,6 +26,7 @@ wl_drm_syncobj_xml = join_paths(wl_protos_dir, 'staging', 'linux-drm-syncobj', '
 wp_presentation_xml = join_paths(wl_protos_dir, 'stable', 'presentation-time', 'presentation-time.xml')
 wp_fifo_xml = join_paths(wl_protos_dir, 'staging', 'fifo', 'fifo-v1.xml')
 wp_commit_timing_xml = join_paths(wl_protos_dir, 'staging', 'commit-timing', 'commit-timing-v1.xml')
+wp_tearing_control_xml = join_paths(wl_protos_dir, 'staging', 'tearing-control', 'tearing-control-v1.xml')
 
 wl_scanner = dependency('wayland-scanner', native: true)
 prog_scanner = find_program(wl_scanner.get_variable('wayland_scanner'))
@@ -62,6 +63,9 @@ generated_files = [
 
   client_header.process(wp_commit_timing_xml),
   code.process(wp_commit_timing_xml),
+
+  client_header.process(wp_tearing_control_xml),
+  code.process(wp_tearing_control_xml),
 ]
 
 wayland_platform = shared_library('nvidia-egl-wayland2',
